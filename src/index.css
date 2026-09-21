@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    font-family: 'Noto Sans Sinhala', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+.font-sinhala-display {
+  font-family: 'Gemunu Libre', 'Noto Sans Sinhala', sans-serif;
+}
