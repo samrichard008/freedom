@@ -1,10 +1,11 @@
 import { Signature, PetitionStats } from '../types';
 import { db, testFirestoreConnection } from '../lib/firebase';
+import { INITIAL_30_SIGNATURES } from './initialSignatures';
 import { 
   collection, 
   doc, 
   setDoc, 
-  getDocs, 
+  getDoc,
   onSnapshot, 
   query, 
   orderBy, 
@@ -17,22 +18,39 @@ const STORAGE_KEY = 'gnanasara_petition_signatures_live_v2';
 
 // Base target: 5,000,000 (50 Lakhs)
 export const PETITION_TARGET = 5000000;
-export const INITIAL_BASE_COUNT = 0;
+export const INITIAL_BASE_COUNT = 30;
 
-// In-memory cache synced with Firestore
-let inMemorySignatures: Signature[] = [];
+// In-memory cache synced with Firestore and seeded with initial 30 signatures
+let inMemorySignatures: Signature[] = [...INITIAL_30_SIGNATURES];
 
 // Initialize memory cache from localStorage on load
 try {
   const cached = localStorage.getItem(STORAGE_KEY);
   if (cached) {
     const parsed = JSON.parse(cached);
-    if (Array.isArray(parsed)) {
-      inMemorySignatures = parsed;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      // Merge cached with initial signatures by ID
+      const map = new Map<string, Signature>();
+      INITIAL_30_SIGNATURES.forEach(s => map.set(s.id, s));
+      parsed.forEach((s: Signature) => map.set(s.id, s));
+      inMemorySignatures = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
     }
+  } else {
+    // Save initial 30 signatures to localStorage so this browser is seeded
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_30_SIGNATURES));
   }
 } catch (e) {
   console.warn('[PetitionStore] Could not read local storage cache', e);
+}
+
+function calculateDistrictCounts(signatures: Signature[]): Record<string, number> {
+  const districtStats: Record<string, number> = {};
+  signatures.forEach(sig => {
+    districtStats[sig.district] = (districtStats[sig.district] || 0) + 1;
+  });
+  return districtStats;
 }
 
 export function getStoredSignatures(): Signature[] {
@@ -52,10 +70,7 @@ export function calculateStats(signatures: Signature[]): PetitionStats {
   const currentCount = signatures.length;
   const percentage = currentCount === 0 ? 0 : Math.min(100, Number(((currentCount / PETITION_TARGET) * 100).toFixed(4)));
 
-  const districtStats: Record<string, number> = {};
-  signatures.forEach(sig => {
-    districtStats[sig.district] = (districtStats[sig.district] || 0) + 1;
-  });
+  const districtStats = calculateDistrictCounts(signatures);
 
   const recentSignatures = signatures.slice(0, 10).map(sig => ({
     ...sig,
@@ -75,20 +90,99 @@ export function getPetitionStats(): PetitionStats {
   return calculateStats(inMemorySignatures);
 }
 
+// Background sync to ensure initial / cached signatures are pushed to Firestore summary
+async function syncLocalToFirestoreSummary(signatures: Signature[]) {
+  try {
+    const summaryRef = doc(db, 'petition_meta', 'summary');
+    await setDoc(summaryRef, {
+      count: signatures.length,
+      recentSigners: signatures.slice(0, 10).map(s => ({
+        id: s.id,
+        fullName: s.fullName,
+        nic: s.nic,
+        phone: s.phone,
+        district: s.district,
+        comment: s.comment || '',
+        createdAt: s.createdAt,
+        verified: true
+      })),
+      districtCounts: calculateDistrictCounts(signatures),
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    console.log('[Firebase] Synchronized summary with', signatures.length, 'signatures');
+  } catch (err) {
+    // If quota or network issue, non-blocking
+    console.warn('[Firebase] Summary sync notice:', err);
+  }
+}
+
+// Trigger initial sync on startup
+setTimeout(() => {
+  syncLocalToFirestoreSummary(inMemorySignatures).catch(() => {});
+}, 1000);
+
 /**
- * Real-time subscription to Firebase Firestore signatures collection.
- * Any new signature added across any phone/browser instantly updates here.
+ * Real-time subscription to Firebase Firestore.
+ * Uses lightweight summary document to preserve read quota and serve high traffic.
  */
 export function subscribeToSignatures(callback: (signatures: Signature[]) => void): Unsubscribe {
   // Test connection once
   testFirestoreConnection().catch(() => {});
 
-  try {
-    const colRef = collection(db, 'signatures');
-    // Order by createdAt descending to show latest first
-    const q = query(colRef, orderBy('createdAt', 'desc'));
+  // Send current baseline state immediately to prevent 0 count on first render
+  callback(inMemorySignatures);
 
-    const unsubscribe = onSnapshot(
+  let unsubs: Array<() => void> = [];
+
+  try {
+    // 1. Subscribe to aggregated summary document (1 document read!)
+    const summaryDocRef = doc(db, 'petition_meta', 'summary');
+    const unsubSummary = onSnapshot(
+      summaryDocRef,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data && typeof data.count === 'number' && data.count >= inMemorySignatures.length) {
+            if (Array.isArray(data.recentSigners) && data.recentSigners.length > 0) {
+              // Merge recent signers with in-memory list
+              const map = new Map<string, Signature>();
+              inMemorySignatures.forEach(s => map.set(s.id, s));
+              data.recentSigners.forEach((s: any) => {
+                if (s && s.id) {
+                  map.set(s.id, {
+                    id: s.id,
+                    fullName: s.fullName || '',
+                    nic: s.nic || '',
+                    phone: s.phone || '',
+                    district: s.district || 'colombo',
+                    comment: s.comment || undefined,
+                    createdAt: s.createdAt || new Date().toISOString(),
+                    verified: true
+                  });
+                }
+              });
+              const merged = Array.from(map.values()).sort(
+                (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+              );
+              saveStoredSignatures(merged);
+              callback(merged);
+              return;
+            }
+          }
+        }
+      },
+      (error) => {
+        console.warn('[Firebase] Summary snapshot notice (quota/offline):', error.message);
+        callback(inMemorySignatures);
+      }
+    );
+    unsubs.push(unsubSummary);
+
+    // 2. Also listen for the latest 20 signatures directly (only 20 reads, not entire db)
+    const colRef = collection(db, 'signatures');
+    const q = query(colRef, orderBy('createdAt', 'desc'), limit(20));
+
+    const unsubSignatures = onSnapshot(
       q,
       (snapshot) => {
         const list: Signature[] = [];
@@ -107,18 +201,28 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
           });
         });
 
-        // Update in-memory and persistent local cache
-        saveStoredSignatures(list);
-        callback(list);
+        if (list.length > 0) {
+          // Merge with in-memory
+          const map = new Map<string, Signature>();
+          inMemorySignatures.forEach(s => map.set(s.id, s));
+          list.forEach(s => map.set(s.id, s));
+          const merged = Array.from(map.values()).sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+          saveStoredSignatures(merged);
+          callback(merged);
+        }
       },
       (error) => {
-        console.warn('[Firebase] Firestore onSnapshot warning:', error.message);
-        // Fall back to stored signatures if offline
+        console.warn('[Firebase] Signatures query notice (quota/offline):', error.message);
         callback(inMemorySignatures);
       }
     );
+    unsubs.push(unsubSignatures);
 
-    return unsubscribe;
+    return () => {
+      unsubs.forEach(fn => fn());
+    };
   } catch (err) {
     console.error('[Firebase] Error setting up listener:', err);
     callback(inMemorySignatures);
@@ -127,7 +231,7 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
 }
 
 /**
- * Adds a new signature directly to Firebase Firestore, and updates local cache.
+ * Adds a new signature directly to Firebase Firestore, and updates local cache & cloud summary.
  */
 export async function addSignatureAsync(data: {
   fullName: string;
@@ -162,25 +266,39 @@ export async function addSignatureAsync(data: {
     verified: true
   };
 
+  // Synchronously update local cache so UI is instantaneous on current device
+  const updated = [newSignature, ...currentSignatures.filter(s => s.id !== newSignature.id)];
+  saveStoredSignatures(updated);
+
   try {
-    // Save to Firestore cloud database
+    // 1. Save to individual Firestore document
     const docRef = doc(db, 'signatures', newSignature.id);
     await setDoc(docRef, newSignature);
 
-    // Synchronously update local cache so UI is instantaneous
-    const updated = [newSignature, ...currentSignatures.filter(s => s.id !== newSignature.id)];
-    saveStoredSignatures(updated);
+    // 2. Also update aggregated cloud summary so all other browsers/phones immediately get the new count & signer
+    const summaryRef = doc(db, 'petition_meta', 'summary');
+    setDoc(summaryRef, {
+      count: updated.length,
+      recentSigners: updated.slice(0, 10).map(s => ({
+        id: s.id,
+        fullName: s.fullName,
+        nic: s.nic,
+        phone: s.phone,
+        district: s.district,
+        comment: s.comment || '',
+        createdAt: s.createdAt,
+        verified: true
+      })),
+      districtCounts: calculateDistrictCounts(updated),
+      updatedAt: new Date().toISOString()
+    }, { merge: true }).catch((e) => console.warn('[Firebase] Summary sync background notice:', e));
 
     return {
       success: true,
       signature: newSignature
     };
   } catch (err: any) {
-    console.warn('[Firebase] Firestore write error, saving locally:', err);
-    // If offline or network issue, persist locally as resilience
-    const updated = [newSignature, ...currentSignatures];
-    saveStoredSignatures(updated);
-
+    console.warn('[Firebase] Firestore write notice, stored locally:', err);
     return {
       success: true,
       signature: newSignature

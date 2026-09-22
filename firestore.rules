@@ -25,6 +25,12 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Aggregated statistics document for low-quota, high-performance counting
+    match /petition_meta/{metaId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Health check / connection test collection
     match /test/{docId} {
       allow read: if true;

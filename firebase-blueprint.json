@@ -44,12 +44,41 @@
         }
       },
       "required": ["id", "fullName", "nic", "phone", "district", "createdAt"]
+    },
+    "PetitionSummary": {
+      "title": "PetitionSummary",
+      "description": "Aggregated petition statistics including total count, district counts, and recent signers for ultra-fast, low-read live dashboard display.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "number",
+          "description": "Total verified signature count"
+        },
+        "districtCounts": {
+          "type": "object",
+          "description": "Map of district code to signature count"
+        },
+        "recentSigners": {
+          "type": "array",
+          "description": "Latest 10 citizen signatures for live display"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of last update"
+        }
+      },
+      "required": ["count", "updatedAt"]
     }
   },
   "firestore": {
     "/signatures/{signatureId}": {
       "schema": "Signature",
       "description": "Public petition signatures submitted by Sri Lankan citizens worldwide."
+    },
+    "/petition_meta/{metaId}": {
+      "schema": "PetitionSummary",
+      "description": "Global summary document to serve thousands of visitors with 1 document read."
     }
   }
 }
