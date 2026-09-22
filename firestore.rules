@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidSignature(data) {
+      return data.keys().hasAll(['id', 'fullName', 'nic', 'phone', 'district', 'createdAt'])
+        && data.id is string && data.id.size() >= 5 && data.id.size() <= 50
+        && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 150
+        && data.nic is string && data.nic.size() >= 8 && data.nic.size() <= 25
+        && data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 30
+        && data.district is string && data.district.size() >= 2 && data.district.size() <= 40
+        && data.createdAt is string
+        && (!('comment' in data) || (data.comment is string && data.comment.size() <= 500))
+        && (!('signatureDataUrl' in data) || data.signatureDataUrl is string);
+    }
+
+    match /signatures/{signatureId} {
+      // Anyone can read signatures for live transparency and petition counting
+      allow read: if true;
+
+      // Anyone can submit their signature once with valid fields
+      allow create: if isValidSignature(request.resource.data);
+
+      // Signatures cannot be tampered with or deleted by public users
+      allow update, delete: if false;
+    }
+
+    // Health check / connection test collection
+    match /test/{docId} {
+      allow read: if true;
+    }
+  }
+}

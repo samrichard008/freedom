@@ -11,11 +11,11 @@ export const PetitionLetterCard: React.FC<PetitionLetterCardProps> = ({ language
   const t = TRANSLATIONS[language];
 
   return (
-    <section id="petition-letter" className="py-12 bg-stone-900 border-b border-stone-800">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6">
+    <section id="petition-letter" className="py-10 sm:py-12 bg-stone-900 border-b border-stone-800">
+      <div className="max-w-4xl mx-auto px-3.5 sm:px-6">
         
         {/* Memorandum Envelope Design */}
-        <div className="rounded-3xl bg-stone-950 border border-amber-900/40 p-6 sm:p-10 shadow-2xl relative overflow-hidden">
+        <div className="rounded-2xl sm:rounded-3xl bg-stone-950 border border-amber-900/40 p-4 sm:p-10 shadow-2xl relative overflow-hidden">
           {/* Subtle watermark background */}
           <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none">
             <Scroll className="w-80 h-80 text-amber-400" />
@@ -23,10 +23,21 @@ export const PetitionLetterCard: React.FC<PetitionLetterCardProps> = ({ language
 
           {/* Header of Letter */}
           <div className="border-b border-amber-900/30 pb-6 mb-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-inner">
-                  <FileText className="w-6 h-6" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="relative w-14 h-14 rounded-2xl overflow-hidden border-2 border-amber-500/60 shadow-lg shrink-0 bg-stone-900">
+                  <img
+                    id="petition-letter-portrait"
+                    src="/gnanasara.png"
+                    alt={language === 'si' ? 'පූජ්‍ය ගලගොඩඅත්තේ ඥානසාර හිමි' : 'Ven. Galagoda Aththe Gnanasara Thero'}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover object-[center_20%]"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (target.src.includes('gnanasara.png')) target.src = '/image.png';
+                      else if (target.src.includes('image.png')) target.src = '/gnanasara_thero.jpg';
+                    }}
+                  />
                 </div>
                 <div>
                   <span className="text-xs uppercase tracking-wider text-amber-400 font-semibold">

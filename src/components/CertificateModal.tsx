@@ -59,16 +59,16 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/85 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-2xl bg-stone-900 border border-amber-800/60 rounded-3xl shadow-2xl p-6 sm:p-8 space-y-6 my-8 animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-4 bg-stone-950/85 backdrop-blur-sm overflow-y-auto">
+      <div className="relative w-full max-w-2xl bg-stone-900 border border-amber-800/60 rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-8 space-y-4 sm:space-y-6 my-4 sm:my-8 animate-in fade-in zoom-in-95 duration-200">
         
         {/* Close Button */}
         <button
           onClick={onClose}
           id="cert-modal-close-btn"
-          className="absolute top-4 right-4 p-2 rounded-full bg-stone-800 text-stone-400 hover:text-white hover:bg-stone-700 transition"
+          className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 rounded-full bg-stone-800 text-stone-400 hover:text-white hover:bg-stone-700 transition"
         >
-          <X className="w-5 h-5" />
+          <X className="w-4 h-4 sm:w-5 sm:h-5" />
         </button>
 
         {/* Top Celebration Header */}
@@ -96,11 +96,28 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
           <div className="absolute bottom-2 right-2 text-amber-500/40 text-xs">❖</div>
 
           <div className="flex items-center justify-between border-b border-amber-900/40 pb-3">
-            <div className="flex items-center gap-2">
-              <Award className="w-5 h-5 text-amber-400" />
-              <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
-                ශ්‍රී ලංකා ජාතික පෙත්සම් ලේඛනය
-              </span>
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-full overflow-hidden border-2 border-amber-500/70 shadow-sm shrink-0 bg-stone-900">
+                <img
+                  src="/gnanasara.png"
+                  alt="Ven. Gnanasara Thero"
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover object-[center_20%]"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (target.src.includes('gnanasara.png')) target.src = '/image.png';
+                    else if (target.src.includes('image.png')) target.src = '/gnanasara_thero.jpg';
+                  }}
+                />
+              </div>
+              <div>
+                <span className="text-[10px] block uppercase text-amber-400 font-semibold tracking-wider">
+                  {language === 'si' ? 'පූජ්‍ය ගලගොඩඅත්තේ ඥානසාර හිමි' : 'Ven. Galagoda Aththe Gnanasara Thero'}
+                </span>
+                <span className="text-xs font-bold uppercase tracking-wider text-stone-200">
+                  ශ්‍රී ලංකා ජාතික පෙත්සම් ලේඛනය
+                </span>
+              </div>
             </div>
             <span className="text-xs font-mono font-bold text-amber-400 bg-amber-950/60 px-2.5 py-1 rounded border border-amber-800/40">
               {signature.id}
@@ -143,7 +160,7 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
           </div>
 
           <div className="text-[11px] text-stone-400 text-center leading-relaxed">
-            “පූජ්‍ය ගලගොඩඅත්තේ ඥානසාර හිමියන් වෙනුවෙන් ජනාධිපති සමාව ඉල්ලා අස්සන් ලක්ෂ 50ක මහජන පෙත්සමට මාගේ සහයෝගය නිල වශයෙන් එක් කරමි.”
+            “පූජ්‍ය ගලගොඩඅත්තේ ඥානසාර හිමියන් වෙනුවෙන් ජනාධිපති සමාව ඉල්ලා අත්සන් ලක්ෂ 50ක මහජන පෙත්සමට මාගේ සහයෝගය නිල වශයෙන් එක් කරමි.”
           </div>
         </div>
 

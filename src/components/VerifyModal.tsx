@@ -35,13 +35,13 @@ export const VerifyModal: React.FC<VerifyModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/80 backdrop-blur-sm">
-      <div className="relative w-full max-w-lg bg-stone-900 border border-stone-700 rounded-3xl shadow-2xl p-6 sm:p-8 space-y-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-950/80 backdrop-blur-sm overflow-y-auto">
+      <div className="relative w-full max-w-lg bg-stone-900 border border-stone-700 rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-8 space-y-5 sm:space-y-6 my-4">
         
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-2 rounded-full bg-stone-800 text-stone-400 hover:text-white transition"
+          className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 rounded-full bg-stone-800 text-stone-400 hover:text-white transition"
         >
           <X className="w-5 h-5" />
         </button>

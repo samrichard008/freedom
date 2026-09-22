@@ -81,6 +81,9 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
   }, [tab, typedName, selectedFont]);
 
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if ('touches' in e && e.cancelable) {
+      e.preventDefault();
+    }
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');

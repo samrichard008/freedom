@@ -3,7 +3,8 @@ import { Language, Signature, PetitionStats } from './types';
 import { 
   getPetitionStats, 
   getStoredSignatures, 
-  addSignature 
+  calculateStats,
+  subscribeToSignatures 
 } from './data/petitionStore';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
@@ -14,6 +15,8 @@ import { DistrictDistribution } from './components/DistrictDistribution';
 import { CertificateModal } from './components/CertificateModal';
 import { VerifyModal } from './components/VerifyModal';
 import { ShareModal } from './components/ShareModal';
+import { AllSignaturesModal } from './components/AllSignaturesModal';
+import { MobileBottomBar } from './components/MobileBottomBar';
 import { Footer } from './components/Footer';
 
 export default function App() {
@@ -24,34 +27,36 @@ export default function App() {
   const [activeCertSignature, setActiveCertSignature] = useState<Signature | null>(null);
   const [showVerifyModal, setShowVerifyModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showAllSignaturesModal, setShowAllSignaturesModal] = useState(false);
+  const [selectedDistrictForModal, setSelectedDistrictForModal] = useState<string>('all');
 
-  // Sync state whenever signatures change
-  const refreshData = () => {
-    setStats(getPetitionStats());
-    setSignatures(getStoredSignatures());
-  };
-
-  // Periodic simulated live ticks to show live nation-wide petition momentum
+  // Real-time Firestore synchronization
   useEffect(() => {
-    const interval = setInterval(() => {
-      setStats(prev => {
-        const increment = Math.floor(Math.random() * 2) + 1;
-        const newCount = prev.currentCount + increment;
-        const newPercentage = Number(((newCount / prev.target) * 100).toFixed(2));
-        return {
-          ...prev,
-          currentCount: newCount,
-          percentage: newPercentage
-        };
-      });
-    }, 9000);
+    const unsubscribe = subscribeToSignatures((updatedSignatures) => {
+      setSignatures(updatedSignatures);
+      setStats(calculateStats(updatedSignatures));
+    });
 
-    return () => clearInterval(interval);
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
+
+  // Sync state whenever signatures change manually
+  const refreshData = () => {
+    const current = getStoredSignatures();
+    setSignatures(current);
+    setStats(calculateStats(current));
+  };
 
   const handleSignSuccess = (newSig: Signature) => {
     refreshData();
     setActiveCertSignature(newSig);
+  };
+
+  const handleOpenAllSignatures = (districtCode: string = 'all') => {
+    setSelectedDistrictForModal(districtCode);
+    setShowAllSignaturesModal(true);
   };
 
   const scrollToSign = () => {
@@ -67,13 +72,13 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col font-sans selection:bg-amber-600 selection:text-white">
+    <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col font-sans selection:bg-amber-600 selection:text-white pb-16 md:pb-0">
       {/* Top Banner Notice */}
       <div className="bg-gradient-to-r from-amber-700 via-amber-600 to-amber-700 py-1.5 px-4 text-center text-stone-950 font-bold text-xs tracking-wide shadow-sm flex items-center justify-center gap-2">
         <span className="animate-pulse">●</span>
         <span>
           {language === 'si'
-            ? 'පූජ්‍ය ගලගොඩඅත්තේ ඥානසාර හිමියන් වෙනුවෙන් ජනාධිපති සමාව ඉල්ලා අස්සන් ලක්ෂ 50 ක මහජන පෙත්සම'
+            ? 'පූජ්‍ය ගලගොඩඅත්තේ ඥානසාර හිමියන් වෙනුවෙන් ජනාධිපති සමාව ඉල්ලා අත්සන් ලක්ෂ 50 ක මහජන පෙත්සම'
             : language === 'ta'
             ? 'ஞானசார தேரருக்கு ஜனாதிபதி பொதுமன்னிப்பு கோரும் 50 இலட்சம் கையெழுத்து மனு'
             : '5 Million Signature National Petition Urging Presidential Pardon for Ven. Gnanasara Thero'}
@@ -87,6 +92,7 @@ export default function App() {
         onSignClick={scrollToSign}
         onVerifyClick={() => setShowVerifyModal(true)}
         onShareClick={() => setShowShareModal(true)}
+        onAllSignaturesClick={() => handleOpenAllSignatures('all')}
         currentCount={stats.currentCount}
       />
 
@@ -114,12 +120,16 @@ export default function App() {
           language={language}
           signatures={signatures}
           onOpenVerify={() => setShowVerifyModal(true)}
+          onViewAll={(district) => handleOpenAllSignatures(district || 'all')}
+          onSignClick={scrollToSign}
+          onSelectSignature={(sig) => setActiveCertSignature(sig)}
         />
 
         {/* Islandwide District Breakdown */}
         <DistrictDistribution
           language={language}
           districtStats={stats.districtStats}
+          onSelectDistrict={(districtCode) => handleOpenAllSignatures(districtCode)}
         />
       </main>
 
@@ -129,6 +139,21 @@ export default function App() {
         onShareClick={() => setShowShareModal(true)}
         onSignClick={scrollToSign}
       />
+
+      {/* All Signatures Directory Modal (50 per page with search and district filter) */}
+      {showAllSignaturesModal && (
+        <AllSignaturesModal
+          language={language}
+          initialDistrict={selectedDistrictForModal}
+          signatures={signatures}
+          onClose={() => setShowAllSignaturesModal(false)}
+          onSelectSignature={(sig) => {
+            setShowAllSignaturesModal(false);
+            setActiveCertSignature(sig);
+          }}
+          onSignClick={scrollToSign}
+        />
+      )}
 
       {/* Certificate Modal on successful sign or lookup */}
       {activeCertSignature && (
@@ -159,6 +184,16 @@ export default function App() {
           onClose={() => setShowShareModal(false)}
         />
       )}
+
+      {/* Mobile Sticky Quick-Action Bar */}
+      <MobileBottomBar
+        language={language}
+        onSignClick={scrollToSign}
+        onAllSignaturesClick={() => handleOpenAllSignatures('all')}
+        onVerifyClick={() => setShowVerifyModal(true)}
+        onShareClick={() => setShowShareModal(true)}
+        totalSignatures={stats.currentCount}
+      />
     </div>
   );
 }

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Language, Signature } from '../types';
 import { TRANSLATIONS, DISTRICTS } from '../data/translations';
 import { SignaturePad } from './SignaturePad';
-import { addSignature } from '../data/petitionStore';
+import { addSignatureAsync } from '../data/petitionStore';
 import { CheckCircle2, AlertCircle, PenTool, ShieldCheck, HeartHandshake } from 'lucide-react';
 
 interface PetitionFormProps {
@@ -34,7 +34,7 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
 
   const isNicValid = !nic.trim() || validateNic(nic);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -69,8 +69,8 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
 
     setLoading(true);
 
-    setTimeout(() => {
-      const result = addSignature({
+    try {
+      const result = await addSignatureAsync({
         fullName,
         nic,
         phone,
@@ -87,22 +87,25 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
       }
 
       onSuccess(result.signature);
-    }, 600);
+    } catch (err: any) {
+      setLoading(false);
+      setError(err?.message || 'Error saving signature. Please try again.');
+    }
   };
 
   return (
-    <section id="sign-form-section" className="py-12 sm:py-16 bg-stone-950 relative">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6">
+    <section id="sign-form-section" className="py-10 sm:py-16 bg-stone-950 relative">
+      <div className="max-w-3xl mx-auto px-3.5 sm:px-6">
         
         {/* Main Form Container */}
-        <div className="rounded-3xl bg-gradient-to-b from-stone-900 to-stone-950 border border-amber-900/50 p-6 sm:p-10 shadow-2xl space-y-8">
+        <div className="rounded-2xl sm:rounded-3xl bg-gradient-to-b from-stone-900 to-stone-950 border border-amber-900/50 p-4 sm:p-10 shadow-2xl space-y-6 sm:space-y-8">
           
           {/* Header */}
-          <div className="text-center space-y-2 border-b border-stone-800 pb-6">
-            <div className="inline-flex p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 mb-2">
-              <PenTool className="w-6 h-6" />
+          <div className="text-center space-y-2 border-b border-stone-800 pb-5 sm:pb-6">
+            <div className="inline-flex p-2.5 sm:p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 mb-1 sm:mb-2">
+              <PenTool className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-stone-100 font-sinhala-display tracking-tight">
+            <h2 className="text-xl sm:text-3xl font-extrabold text-stone-100 font-sinhala-display tracking-tight">
               {t.formTitle}
             </h2>
             <p className="text-xs sm:text-sm text-stone-400 max-w-xl mx-auto">
@@ -112,14 +115,14 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
 
           {/* Error Notice */}
           {error && (
-            <div className="p-4 rounded-xl bg-rose-950/60 border border-rose-700/60 text-rose-200 text-sm flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div className="p-3.5 sm:p-4 rounded-xl bg-rose-950/60 border border-rose-700/60 text-rose-200 text-xs sm:text-sm flex items-start gap-2.5 sm:gap-3">
+              <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-5 sm:space-y-6">
             
             {/* Full Name */}
             <div className="space-y-1.5">
@@ -134,7 +137,7 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder={t.namePlaceholder}
-                className="w-full px-4 py-3 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-sm sm:text-base transition"
+                className="w-full px-3.5 py-3 sm:px-4 sm:py-3.5 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-base transition"
               />
             </div>
 
@@ -153,7 +156,7 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
                   value={nic}
                   onChange={(e) => setNic(e.target.value)}
                   placeholder={t.nicPlaceholder}
-                  className={`w-full px-4 py-3 rounded-xl bg-stone-950 border text-stone-100 placeholder-stone-600 focus:outline-none text-sm sm:text-base uppercase tracking-wider transition ${
+                  className={`w-full px-3.5 py-3 sm:px-4 sm:py-3.5 rounded-xl bg-stone-950 border text-stone-100 placeholder-stone-600 focus:outline-none text-base uppercase tracking-wider transition ${
                     !isNicValid
                       ? 'border-rose-500 focus:border-rose-500'
                       : 'border-stone-700 focus:border-amber-500 focus:ring-1 focus:ring-amber-500'
@@ -178,7 +181,7 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder={t.phonePlaceholder}
-                  className="w-full px-4 py-3 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-sm sm:text-base transition"
+                  className="w-full px-3.5 py-3 sm:px-4 sm:py-3.5 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-base transition"
                 />
               </div>
             </div>
@@ -192,7 +195,7 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
                 id="signer-district-select"
                 value={district}
                 onChange={(e) => setDistrict(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-sm sm:text-base transition cursor-pointer"
+                className="w-full px-3.5 py-3 sm:px-4 sm:py-3.5 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-base transition cursor-pointer"
               >
                 {DISTRICTS.map((d) => (
                   <option key={d.value} value={d.value} className="bg-stone-900 text-stone-100 py-1">
@@ -213,12 +216,12 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 placeholder={t.commentPlaceholder}
-                className="w-full px-4 py-3 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-sm transition"
+                className="w-full px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-base transition"
               />
             </div>
 
             {/* Digital Signature Pad */}
-            <div className="p-4 rounded-2xl bg-stone-950/60 border border-stone-800">
+            <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-stone-950/60 border border-stone-800">
               <SignaturePad
                 language={language}
                 signerName={fullName}
@@ -227,13 +230,13 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
             </div>
 
             {/* Agreement Checkbox */}
-            <label className="flex items-start gap-3 p-3 rounded-xl bg-stone-950 border border-stone-800/80 cursor-pointer hover:border-amber-800/60 transition">
+            <label className="flex items-start gap-2.5 sm:gap-3 p-3 rounded-xl bg-stone-950 border border-stone-800/80 cursor-pointer hover:border-amber-800/60 transition">
               <input
                 type="checkbox"
                 id="agree-checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
-                className="w-4 h-4 mt-1 rounded border-stone-700 text-amber-600 focus:ring-amber-500 bg-stone-900"
+                className="w-4 h-4 mt-0.5 rounded border-stone-700 text-amber-600 focus:ring-amber-500 bg-stone-900 shrink-0"
               />
               <span className="text-xs sm:text-sm text-stone-300 leading-snug">
                 {t.agreeCheckbox}
@@ -245,7 +248,7 @@ export const PetitionForm: React.FC<PetitionFormProps> = ({ language, onSuccess 
               type="submit"
               id="submit-petition-btn"
               disabled={loading}
-              className="w-full py-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-amber-500 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold text-base sm:text-lg shadow-xl shadow-amber-600/30 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
+              className="w-full py-3.5 sm:py-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-amber-500 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-extrabold text-base sm:text-lg shadow-xl shadow-amber-600/30 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed active:scale-[0.98]"
             >
               {loading ? (
                 <>

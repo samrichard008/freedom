@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "Signature": {
+      "title": "Signature",
+      "description": "A citizen petition signature document for Ven. Galagoda Aththe Gnanasara Thero presidential pardon petition.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique reference ID for this petition signature"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Full legal or citizen name"
+        },
+        "nic": {
+          "type": "string",
+          "description": "National Identity Card number"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact telephone number"
+        },
+        "district": {
+          "type": "string",
+          "description": "Sri Lankan district code or overseas"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional citizen comment or message"
+        },
+        "signatureDataUrl": {
+          "type": "string",
+          "description": "Drawn signature stroke data URL"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp when signed"
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "Verification status flag"
+        }
+      },
+      "required": ["id", "fullName", "nic", "phone", "district", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/signatures/{signatureId}": {
+      "schema": "Signature",
+      "description": "Public petition signatures submitted by Sri Lankan citizens worldwide."
+    }
+  }
+}
