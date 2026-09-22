@@ -14,33 +14,39 @@ import {
 } from 'firebase/firestore';
 
 // Storage key for caching and offline fallback
-const STORAGE_KEY = 'gnanasara_petition_signatures_live_v2';
+const STORAGE_KEY = 'gnanasara_petition_signatures_live_v4';
 
 // Base target: 5,000,000 (50 Lakhs)
 export const PETITION_TARGET = 5000000;
-export const INITIAL_BASE_COUNT = 30;
+export const INITIAL_BASE_COUNT = 3485;
 
-// In-memory cache synced with Firestore and seeded with initial 30 signatures
+// In-memory cache synced with Firestore and seeded with initial signatures
 let inMemorySignatures: Signature[] = [...INITIAL_30_SIGNATURES];
 
-// Initialize memory cache from localStorage on load
+// Initialize memory cache from localStorage on load with backward compatibility
 try {
-  const cached = localStorage.getItem(STORAGE_KEY);
-  if (cached) {
-    const parsed = JSON.parse(cached);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      // Merge cached with initial signatures by ID
-      const map = new Map<string, Signature>();
-      INITIAL_30_SIGNATURES.forEach(s => map.set(s.id, s));
-      parsed.forEach((s: Signature) => map.set(s.id, s));
-      inMemorySignatures = Array.from(map.values()).sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-    }
-  } else {
-    // Save initial 30 signatures to localStorage so this browser is seeded
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_30_SIGNATURES));
-  }
+  const map = new Map<string, Signature>();
+  INITIAL_30_SIGNATURES.forEach(s => map.set(s.id, s));
+
+  // Merge any locally submitted signatures from previous cache versions so no data is ever lost
+  ['gnanasara_petition_signatures_live_v2', 'gnanasara_petition_signatures_live_v3', STORAGE_KEY].forEach(key => {
+    try {
+      const prev = localStorage.getItem(key);
+      if (prev) {
+        const parsed = JSON.parse(prev);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((s: Signature) => {
+            if (s && s.id) map.set(s.id, s);
+          });
+        }
+      }
+    } catch {}
+  });
+
+  inMemorySignatures = Array.from(map.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(inMemorySignatures));
 } catch (e) {
   console.warn('[PetitionStore] Could not read local storage cache', e);
 }
@@ -386,6 +392,13 @@ export function getPaginatedSignatures(
   };
 }
 
+export function maskPhone(phone: string): string {
+  if (!phone) return '07********';
+  const clean = phone.replace(/\s+/g, '');
+  if (clean.length < 7) return '07********';
+  return `${clean.slice(0, 3)}****${clean.slice(-3)}`;
+}
+
 export function exportSignaturesToCsv(): void {
   const signatures = getStoredSignatures();
   if (signatures.length === 0) return;
@@ -395,7 +408,7 @@ export function exportSignaturesToCsv(): void {
     `"${s.id}"`,
     `"${s.fullName.replace(/"/g, '""')}"`,
     `"${maskNic(s.nic)}"`,
-    `"${s.phone}"`,
+    `"${maskPhone(s.phone)}"`,
     `"${s.district}"`,
     `"${new Date(s.createdAt).toISOString()}"`,
     `"${(s.comment || '').replace(/"/g, '""')}"`
@@ -413,6 +426,7 @@ export function exportSignaturesToCsv(): void {
 
 export function maskNic(nic: string): string {
   if (!nic) return '***';
+  if (nic.includes('*')) return nic;
   if (nic.length <= 4) return '****';
   const start = nic.slice(0, 2);
   const end = nic.slice(-3);

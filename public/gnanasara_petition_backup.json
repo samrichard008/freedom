@@ -1,6 +1,4 @@
-import { Signature } from '../types';
-
-export const INITIAL_30_SIGNATURES: Signature[] = [
+[
   {
     "id": "SL-PET-10463",
     "fullName": "වසන්ත කුමාරසිංහ (Wasantha Kumarasinghe)",
@@ -34851,4 +34849,4 @@ export const INITIAL_30_SIGNATURES: Signature[] = [
     "comment": "",
     "verified": true
   }
-];
+]
