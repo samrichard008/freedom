@@ -1,13 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { Language, Signature } from '../types';
 import { DISTRICTS, TRANSLATIONS } from '../data/translations';
-import { getStoredSignatures, maskNic, exportSignaturesToCsv } from '../data/petitionStore';
+import { getStoredSignatures, maskNic } from '../data/petitionStore';
 import { 
   X, 
   Search, 
   MapPin, 
   Calendar, 
-  Download, 
   CheckCircle, 
   ChevronLeft, 
   ChevronRight, 
@@ -128,20 +127,8 @@ export const AllSignaturesModal: React.FC<AllSignaturesModalProps> = ({
             </div>
           </div>
 
-          {/* Action buttons (CSV Download & Close) */}
+          {/* Action buttons (Close) */}
           <div className="flex items-center gap-2 self-end sm:self-center">
-            {filtered.length > 0 && (
-              <button
-                onClick={exportSignaturesToCsv}
-                className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-medium flex items-center gap-1.5 transition border border-stone-700"
-                title="Download CSV / Excel list"
-              >
-                <Download className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden sm:inline">CSV බාගත කරන්න</span>
-                <span className="sm:hidden">CSV</span>
-              </button>
-            )}
-
             <button
               onClick={onClose}
               id="close-all-signatures-btn"

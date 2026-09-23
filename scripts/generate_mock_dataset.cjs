@@ -2,7 +2,8 @@ const fs = require('fs');
 const path = require('path');
 
 // 1. Read the existing 60 real signatures
-const raw60 = JSON.parse(fs.readFileSync(path.join(__dirname, '../public/gnanasara_petition_backup.json'), 'utf8'));
+const allRaw = JSON.parse(fs.readFileSync(path.join(__dirname, '../public/gnanasara_petition_backup.json'), 'utf8'));
+const raw60 = allRaw.slice(0, 60);
 console.log('Existing real signatures:', raw60.length);
 
 const surnames = [
@@ -149,7 +150,7 @@ function generatePhone() {
   return `${prefix}${num}`;
 }
 
-const TOTAL_NEW_TARGET = 3425; // 3425 new + 60 existing = 3485 signatures!
+const TOTAL_NEW_TARGET = 15425; // 15425 new + 60 existing = 15485 signatures!
 const generated = [];
 
 // Base time: between 4 days ago and 1 hour ago

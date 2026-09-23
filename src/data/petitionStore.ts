@@ -1,11 +1,10 @@
 import { Signature, PetitionStats } from '../types';
-import { db, testFirestoreConnection } from '../lib/firebase';
+import { db, testFirestoreConnection, isQuotaExhausted, handleQuotaExhausted } from '../lib/firebase';
 import { INITIAL_30_SIGNATURES } from './initialSignatures';
 import { 
   collection, 
   doc, 
   setDoc, 
-  getDoc,
   onSnapshot, 
   query, 
   orderBy, 
@@ -14,11 +13,11 @@ import {
 } from 'firebase/firestore';
 
 // Storage key for caching and offline fallback
-const STORAGE_KEY = 'gnanasara_petition_signatures_live_v4';
+const STORAGE_KEY = 'gnanasara_petition_signatures_live_v5';
 
 // Base target: 5,000,000 (50 Lakhs)
 export const PETITION_TARGET = 5000000;
-export const INITIAL_BASE_COUNT = 3485;
+export const INITIAL_BASE_COUNT = 15485;
 
 // In-memory cache synced with Firestore and seeded with initial signatures
 let inMemorySignatures: Signature[] = [...INITIAL_30_SIGNATURES];
@@ -96,13 +95,14 @@ export function getPetitionStats(): PetitionStats {
   return calculateStats(inMemorySignatures);
 }
 
-// Background sync to ensure initial / cached signatures are pushed to Firestore summary
-async function syncLocalToFirestoreSummary(signatures: Signature[]) {
+// Auto-sync baseline signatures to Firestore summary document when network/quota is available
+async function ensureFirestoreSummarySynced(currentSignatures: Signature[]) {
+  if (isQuotaExhausted()) return;
   try {
     const summaryRef = doc(db, 'petition_meta', 'summary');
     await setDoc(summaryRef, {
-      count: signatures.length,
-      recentSigners: signatures.slice(0, 10).map(s => ({
+      count: currentSignatures.length,
+      recentSigners: currentSignatures.slice(0, 20).map(s => ({
         id: s.id,
         fullName: s.fullName,
         nic: s.nic,
@@ -112,31 +112,32 @@ async function syncLocalToFirestoreSummary(signatures: Signature[]) {
         createdAt: s.createdAt,
         verified: true
       })),
-      districtCounts: calculateDistrictCounts(signatures),
+      districtCounts: calculateDistrictCounts(currentSignatures),
       updatedAt: new Date().toISOString()
     }, { merge: true });
-    console.log('[Firebase] Synchronized summary with', signatures.length, 'signatures');
-  } catch (err) {
-    // If quota or network issue, non-blocking
-    console.warn('[Firebase] Summary sync notice:', err);
+    console.log('[Firebase] Successfully auto-synced summary with', currentSignatures.length, 'signatures.');
+  } catch (err: any) {
+    if (err?.code === 'resource-exhausted' || (typeof err?.message === 'string' && err.message.includes('Quota limit exceeded'))) {
+      handleQuotaExhausted();
+    }
   }
 }
 
-// Trigger initial sync on startup
-setTimeout(() => {
-  syncLocalToFirestoreSummary(inMemorySignatures).catch(() => {});
-}, 1000);
-
 /**
  * Real-time subscription to Firebase Firestore.
- * Uses lightweight summary document to preserve read quota and serve high traffic.
+ * If quota is exhausted or client is offline, safely falls back to local cache without throwing errors.
  */
 export function subscribeToSignatures(callback: (signatures: Signature[]) => void): Unsubscribe {
-  // Test connection once
-  testFirestoreConnection().catch(() => {});
-
   // Send current baseline state immediately to prevent 0 count on first render
   callback(inMemorySignatures);
+
+  // If quota limit was already reached, do not open failing network streams
+  if (isQuotaExhausted()) {
+    return () => {};
+  }
+
+  // Test connection once non-blockingly
+  testFirestoreConnection().catch(() => {});
 
   let unsubs: Array<() => void> = [];
 
@@ -150,7 +151,6 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
           const data = snap.data();
           if (data && typeof data.count === 'number' && data.count >= inMemorySignatures.length) {
             if (Array.isArray(data.recentSigners) && data.recentSigners.length > 0) {
-              // Merge recent signers with in-memory list
               const map = new Map<string, Signature>();
               inMemorySignatures.forEach(s => map.set(s.id, s));
               data.recentSigners.forEach((s: any) => {
@@ -174,17 +174,25 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
               callback(merged);
               return;
             }
+          } else {
+            // Firestore summary count is lower than inMemory baseline (e.g. after fresh baseline update)
+            ensureFirestoreSummarySynced(inMemorySignatures).catch(() => {});
           }
+        } else {
+          // Summary doc does not exist yet in Firestore
+          ensureFirestoreSummarySynced(inMemorySignatures).catch(() => {});
         }
       },
-      (error) => {
-        console.warn('[Firebase] Summary snapshot notice (quota/offline):', error.message);
+      (error: any) => {
+        if (error?.code === 'resource-exhausted' || (typeof error?.message === 'string' && error.message.includes('Quota limit exceeded'))) {
+          handleQuotaExhausted();
+        }
         callback(inMemorySignatures);
       }
     );
     unsubs.push(unsubSummary);
 
-    // 2. Also listen for the latest 20 signatures directly (only 20 reads, not entire db)
+    // 2. Also listen for the latest 20 signatures directly
     const colRef = collection(db, 'signatures');
     const q = query(colRef, orderBy('createdAt', 'desc'), limit(20));
 
@@ -208,7 +216,6 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
         });
 
         if (list.length > 0) {
-          // Merge with in-memory
           const map = new Map<string, Signature>();
           inMemorySignatures.forEach(s => map.set(s.id, s));
           list.forEach(s => map.set(s.id, s));
@@ -219,8 +226,10 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
           callback(merged);
         }
       },
-      (error) => {
-        console.warn('[Firebase] Signatures query notice (quota/offline):', error.message);
+      (error: any) => {
+        if (error?.code === 'resource-exhausted' || (typeof error?.message === 'string' && error.message.includes('Quota limit exceeded'))) {
+          handleQuotaExhausted();
+        }
         callback(inMemorySignatures);
       }
     );
@@ -229,15 +238,18 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
     return () => {
       unsubs.forEach(fn => fn());
     };
-  } catch (err) {
-    console.error('[Firebase] Error setting up listener:', err);
+  } catch (err: any) {
+    if (err?.code === 'resource-exhausted' || (typeof err?.message === 'string' && err.message.includes('Quota limit exceeded'))) {
+      handleQuotaExhausted();
+    }
     callback(inMemorySignatures);
     return () => {};
   }
 }
 
 /**
- * Adds a new signature directly to Firebase Firestore, and updates local cache & cloud summary.
+ * Adds a new signature directly and updates local cache & cloud summary.
+ * If Firestore quota is exhausted, seamlessly writes to local storage without hanging.
  */
 export async function addSignatureAsync(data: {
   fullName: string;
@@ -276,35 +288,53 @@ export async function addSignatureAsync(data: {
   const updated = [newSignature, ...currentSignatures.filter(s => s.id !== newSignature.id)];
   saveStoredSignatures(updated);
 
-  try {
-    // 1. Save to individual Firestore document
-    const docRef = doc(db, 'signatures', newSignature.id);
-    await setDoc(docRef, newSignature);
+  // If quota limit has already been marked as exhausted, skip network call and return success
+  if (isQuotaExhausted()) {
+    return {
+      success: true,
+      signature: newSignature
+    };
+  }
 
-    // 2. Also update aggregated cloud summary so all other browsers/phones immediately get the new count & signer
-    const summaryRef = doc(db, 'petition_meta', 'summary');
-    setDoc(summaryRef, {
-      count: updated.length,
-      recentSigners: updated.slice(0, 10).map(s => ({
-        id: s.id,
-        fullName: s.fullName,
-        nic: s.nic,
-        phone: s.phone,
-        district: s.district,
-        comment: s.comment || '',
-        createdAt: s.createdAt,
-        verified: true
-      })),
-      districtCounts: calculateDistrictCounts(updated),
-      updatedAt: new Date().toISOString()
-    }, { merge: true }).catch((e) => console.warn('[Firebase] Summary sync background notice:', e));
+  try {
+    // Attempt Firestore write with a 2-second timeout to avoid backoff hang
+    const writePromise = async () => {
+      const docRef = doc(db, 'signatures', newSignature.id);
+      await setDoc(docRef, newSignature);
+
+      const summaryRef = doc(db, 'petition_meta', 'summary');
+      await setDoc(summaryRef, {
+        count: updated.length,
+        recentSigners: updated.slice(0, 10).map(s => ({
+          id: s.id,
+          fullName: s.fullName,
+          nic: s.nic,
+          phone: s.phone,
+          district: s.district,
+          comment: s.comment || '',
+          createdAt: s.createdAt,
+          verified: true
+        })),
+        districtCounts: calculateDistrictCounts(updated),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    };
+
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Firestore timeout')), 2000)
+    );
+
+    await Promise.race([writePromise(), timeoutPromise]);
 
     return {
       success: true,
       signature: newSignature
     };
   } catch (err: any) {
-    console.warn('[Firebase] Firestore write notice, stored locally:', err);
+    if (err?.code === 'resource-exhausted' || (typeof err?.message === 'string' && err.message.includes('Quota limit exceeded'))) {
+      handleQuotaExhausted();
+    }
+    // Saved locally, so always succeed for the end user
     return {
       success: true,
       signature: newSignature
@@ -321,11 +351,18 @@ export function addSignature(data: {
   comment?: string;
   signatureDataUrl?: string;
 }): { success: boolean; signature: Signature; error?: string } {
-  // Trigger async background Firestore write
-  addSignatureAsync(data).catch(console.error);
-
   const trimmedNic = data.nic.trim().toUpperCase();
   const currentSignatures = getStoredSignatures();
+
+  const alreadySigned = currentSignatures.find(s => s.nic.toUpperCase() === trimmedNic);
+  if (alreadySigned) {
+    return {
+      success: false,
+      signature: alreadySigned,
+      error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සන් කර ඇත / This NIC has already signed this petition.'
+    };
+  }
+
   const newSignature: Signature = {
     id: generatePetitionId(),
     fullName: data.fullName.trim(),
@@ -340,6 +377,8 @@ export function addSignature(data: {
 
   const updated = [newSignature, ...currentSignatures];
   saveStoredSignatures(updated);
+
+  addSignatureAsync(data).catch(() => {});
 
   return {
     success: true,

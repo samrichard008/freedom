@@ -1,8 +1,7 @@
 import React from 'react';
 import { Language } from '../types';
 import { TRANSLATIONS } from '../data/translations';
-import { Award, Heart, Shield, Share2, Download } from 'lucide-react';
-import { exportSignaturesToCsv } from '../data/petitionStore';
+import { Award, Heart, Share2 } from 'lucide-react';
 
 interface FooterProps {
   language: Language;
@@ -35,14 +34,6 @@ export const Footer: React.FC<FooterProps> = ({ language, onShareClick, onSignCl
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              onClick={exportSignaturesToCsv}
-              className="px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-amber-400 text-xs font-semibold transition flex items-center gap-1.5 border border-amber-600/40 shadow-sm"
-              title="Download CSV Backup of all signatures"
-            >
-              <Download className="w-3.5 h-3.5 text-amber-400" />
-              <span>{language === 'si' ? 'දත්ත උපස්ථය (CSV)' : language === 'ta' ? 'தரவு காப்புப்பிரதி (CSV)' : 'Backup Data (CSV)'}</span>
-            </button>
             <button
               onClick={onSignClick}
               className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-bold text-xs transition"
