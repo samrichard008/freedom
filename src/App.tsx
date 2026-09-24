@@ -18,11 +18,240 @@ import { ShareModal } from './components/ShareModal';
 import { AllSignaturesModal } from './components/AllSignaturesModal';
 import { MobileBottomBar } from './components/MobileBottomBar';
 import { Footer } from './components/Footer';
+import { Database, Play, RefreshCw, CheckCircle, AlertTriangle, ArrowLeft, Terminal, ShieldAlert } from 'lucide-react';
+
+// Migration Dashboard sub-component
+function MigrationDashboard() {
+  const [logs, setLogs] = useState<string[]>(['[System] Migration Dashboard initialized. Click "Start Migration" to begin.']);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [totalFetched, setTotalFetched] = useState(0);
+  const [totalNew, setTotalNew] = useState(0);
+  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'error'>('idle');
+  const [batchLimit, setBatchLimit] = useState(1000);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [lastId, setLastId] = useState<string | null>(null);
+
+  const addLog = (msg: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs(prev => [...prev, `[${timestamp}] ${msg}`]);
+  };
+
+  const handleStartMigration = async () => {
+    if (isMigrating) return;
+    setIsMigrating(true);
+    setStatus('running');
+    addLog(`Starting migration batch processing (Limit: ${batchLimit})...`);
+
+    let currentLastId = lastId;
+
+    try {
+      while (true) {
+        addLog(`Fetching batch starting after: ${currentLastId || 'First Record'}...`);
+        const url = `/api/migrate-firebase?limit=${batchLimit}${currentLastId ? `&startAfterId=${currentLastId}` : ''}`;
+        
+        const response = await fetch(url);
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'API returned failure status');
+        }
+
+        const count = data.count || 0;
+        const newlyMigrated = data.migratedCount || 0;
+        const currentLast = data.lastId || null;
+
+        if (count === 0) {
+          addLog('🎉 Migration complete! No more signatures left in Firebase.');
+          setStatus('completed');
+          setIsMigrating(false);
+          break;
+        }
+
+        setTotalFetched(prev => prev + count);
+        setTotalNew(prev => prev + newlyMigrated);
+        setLastId(currentLast);
+        currentLastId = currentLast;
+
+        addLog(`✅ Batch Success: Fetched ${count} signatures. Newly inserted: ${newlyMigrated}. Duplicates skipped: ${count - newlyMigrated}.`);
+
+        // Give the database / Vercel some breathing room
+        await new Promise(r => setTimeout(r, 600));
+
+        if (!currentLast) {
+          addLog('🎉 Migration complete! Reached the end of the Firebase collection.');
+          setStatus('completed');
+          setIsMigrating(false);
+          break;
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || String(err));
+      setStatus('error');
+      setIsMigrating(false);
+      addLog(`❌ Critical Error: ${err.message || String(err)}`);
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 my-8 bg-stone-900 rounded-2xl border border-stone-800 shadow-xl">
+      <div className="flex items-center gap-4 mb-6 pb-6 border-b border-stone-800">
+        <div className="p-3 bg-amber-500/10 text-amber-500 rounded-xl">
+          <Database className="w-8 h-8" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-amber-500">Firebase to PostgreSQL Database Migration</h1>
+          <p className="text-sm text-stone-400">Migrate all 42,000+ live signatures safely in real-time batch queries</p>
+        </div>
+      </div>
+
+      {/* Warning Alert */}
+      <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 mb-6 flex gap-3 items-start">
+        <ShieldAlert className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+        <div className="text-sm">
+          <p className="font-semibold text-amber-400">அறிவுறுத்தல் (Tamil Translation Note)</p>
+          <p className="text-stone-300 mt-1">
+            மச்சான், இந்த டூல் மூலம் உங்கள் Firebase-ல் உள்ள அனைத்து பழைய கையොப்பங்களையும் உங்களது புதிய PostgreSQL-க்கு மாற்றலாம். 
+            இது **"ON CONFLICT DO NOTHING"** மூலம் இயங்குவதால், ஏற்கனவே இருக்கும் கையොப்பங்கள் மீண்டும் மீண்டும் பதிவாகாது. 
+            எனவே எப்போது வேண்டுமானாலும் பயமின்றி இயக்கலாம்!
+          </p>
+        </div>
+      </div>
+
+      {/* Stats Counter */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-stone-950 p-4 rounded-xl border border-stone-800">
+          <p className="text-xs text-stone-500 uppercase tracking-wider">Processed From Firebase</p>
+          <p className="text-2xl font-extrabold mt-1 text-stone-200">{totalFetched.toLocaleString()}</p>
+        </div>
+        <div className="bg-stone-950 p-4 rounded-xl border border-stone-800">
+          <p className="text-xs text-amber-500 uppercase tracking-wider">Newly Migrated to Postgres</p>
+          <p className="text-2xl font-extrabold mt-1 text-amber-500">{totalNew.toLocaleString()}</p>
+        </div>
+        <div className="bg-stone-950 p-4 rounded-xl border border-stone-800">
+          <p className="text-xs text-emerald-500 uppercase tracking-wider">Duplicates Skipped / Verified</p>
+          <p className="text-2xl font-extrabold mt-1 text-emerald-500">{(totalFetched - totalNew).toLocaleString()}</p>
+        </div>
+      </div>
+
+      {/* Batch limits and Controls */}
+      <div className="flex flex-wrap items-center gap-4 mb-6">
+        <div>
+          <label className="block text-xs text-stone-400 mb-1">Batch Limit (Signatures per call)</label>
+          <select 
+            value={batchLimit} 
+            onChange={(e) => setBatchLimit(parseInt(e.target.value))}
+            disabled={isMigrating}
+            className="bg-stone-950 text-stone-200 border border-stone-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
+          >
+            <option value="200">200 signatures (Slower, Safer)</option>
+            <option value="500">500 signatures (Recommended)</option>
+            <option value="1000">1000 signatures (Lightning Fast)</option>
+          </select>
+        </div>
+
+        <div className="flex-1 min-w-[200px]" />
+
+        <div className="flex gap-3">
+          <button
+            onClick={() => window.location.href = '/'}
+            disabled={isMigrating}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg border border-stone-800 text-stone-400 hover:text-stone-200 hover:bg-stone-800 transition disabled:opacity-50"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Site
+          </button>
+          
+          <button
+            onClick={handleStartMigration}
+            disabled={isMigrating || status === 'completed'}
+            className="flex items-center gap-2 px-6 py-2 text-sm font-bold rounded-lg bg-amber-500 hover:bg-amber-600 text-stone-950 transition disabled:opacity-50 shadow-md"
+          >
+            {isMigrating ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                Migrating...
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                Start Migration
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Progress Bar */}
+      {status === 'running' && (
+        <div className="mb-6">
+          <div className="flex justify-between items-center text-xs text-stone-400 mb-1">
+            <span>Processing Live Stream...</span>
+            <span className="animate-pulse text-amber-500">● Live Progress</span>
+          </div>
+          <div className="w-full bg-stone-950 h-3 rounded-full overflow-hidden border border-stone-800">
+            <div className="bg-amber-500 h-full animate-pulse transition-all duration-300" style={{ width: '100%' }} />
+          </div>
+        </div>
+      )}
+
+      {/* Completion Screen */}
+      {status === 'completed' && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-xl mb-6 flex gap-3 items-center">
+          <CheckCircle className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+          <div>
+            <p className="font-semibold text-emerald-400">Migration Successfully Finished!</p>
+            <p className="text-xs text-stone-300 mt-0.5">
+              All records have been parsed, migrated, and merged perfectly. Your live website is now 100% full-stack!
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Error Panel */}
+      {status === 'error' && (
+        <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl mb-6 flex gap-3 items-center">
+          <AlertTriangle className="w-6 h-6 text-red-500 flex-shrink-0" />
+          <div>
+            <p className="font-semibold text-red-400">Migration Stopped Due to Error</p>
+            <p className="text-xs text-stone-300 mt-0.5">{errorMsg}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Real-time Logs Console */}
+      <div className="bg-stone-950 rounded-xl p-4 border border-stone-800">
+        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-stone-900">
+          <Terminal className="w-4 h-4 text-amber-500" />
+          <span className="text-xs font-bold text-amber-500 tracking-wider uppercase">Console Logs Output</span>
+        </div>
+        <div className="font-mono text-[11px] leading-relaxed text-stone-300 h-64 overflow-y-auto flex flex-col gap-1 select-text scrollbar-thin">
+          {logs.map((log, i) => (
+            <div key={i} className={`p-1 rounded ${log.includes('❌') ? 'bg-red-500/5 text-red-400' : log.includes('✅') ? 'text-emerald-400' : log.includes('🎉') ? 'bg-amber-500/10 text-amber-400 font-bold' : ''}`}>
+              {log}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [language, setLanguage] = useState<Language>('si');
   const [stats, setStats] = useState<PetitionStats>(() => getPetitionStats());
   const [signatures, setSignatures] = useState<Signature[]>(() => getStoredSignatures());
+  const [isMigratePage, setIsMigratePage] = useState(false);
+
+  useEffect(() => {
+    if (window.location.search === '?migrate=true' || window.location.hash === '#migrate') {
+      setIsMigratePage(true);
+    }
+  }, []);
 
   const [activeCertSignature, setActiveCertSignature] = useState<Signature | null>(null);
   const [showVerifyModal, setShowVerifyModal] = useState(false);
@@ -70,6 +299,14 @@ export default function App() {
       }, 500);
     }
   };
+
+  if (isMigratePage) {
+    return (
+      <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col font-sans selection:bg-amber-600 selection:text-white p-4">
+        <MigrationDashboard />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col font-sans selection:bg-amber-600 selection:text-white pb-16 md:pb-0">
