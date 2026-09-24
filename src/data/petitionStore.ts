@@ -437,3 +437,19 @@ export function verifySignatureQuery(query: string): Signature | null {
     ) || null
   );
 }
+
+export async function verifySignatureQueryAsync(query: string): Promise<Signature | null> {
+  const clean = query.trim().toUpperCase();
+  if (!clean) return null;
+  try {
+    const res = await fetch(`/api/verify-signature?query=${encodeURIComponent(clean)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.success && data.found) {
+      return data.signature;
+    }
+  } catch (err) {
+    console.warn('[API] Error verifying signature:', err);
+  }
+  return null;
+}

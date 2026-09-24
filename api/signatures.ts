@@ -1,6 +1,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getAllNewSignatures } from '../api-lib/db.js';
 
+function maskNicServer(nic: string): string {
+  if (!nic) return '';
+  const clean = nic.trim().toUpperCase();
+  if (clean.length <= 4) return '****';
+  const start = clean.slice(0, 2);
+  const end = clean.slice(-3);
+  return `${start}*****${end}`;
+}
+
+function maskPhoneServer(phone: string): string {
+  if (!phone) return '';
+  const clean = phone.replace(/\s+/g, '');
+  if (clean.length < 7) return '07********';
+  return `${clean.slice(0, 3)}****${clean.slice(-3)}`;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -18,7 +34,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const list = await getAllNewSignatures();
-    res.status(200).json({ success: true, signatures: list });
+    const safeList = list.map(s => ({
+      ...s,
+      nic: maskNicServer(s.nic),
+      phone: maskPhoneServer(s.phone)
+    }));
+    res.status(200).json({ success: true, signatures: safeList });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message || 'Failed to fetch signatures' });
   }

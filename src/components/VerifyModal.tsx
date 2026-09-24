@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Language, Signature } from '../types';
 import { TRANSLATIONS, DISTRICTS } from '../data/translations';
-import { verifySignatureQuery, maskNic } from '../data/petitionStore';
-import { Search, X, CheckCircle, AlertTriangle, ShieldCheck, MapPin, Calendar } from 'lucide-react';
+import { verifySignatureQueryAsync, maskNic } from '../data/petitionStore';
+import { Search, X, CheckCircle, AlertTriangle, ShieldCheck, MapPin, Calendar, Loader2 } from 'lucide-react';
 
 interface VerifyModalProps {
   language: Language;
@@ -18,15 +18,24 @@ export const VerifyModal: React.FC<VerifyModalProps> = ({
   const t = TRANSLATIONS[language];
   const [query, setQuery] = useState('');
   const [searched, setSearched] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Signature | null>(null);
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
 
-    const found = verifySignatureQuery(query);
-    setResult(found);
-    setSearched(true);
+    setLoading(true);
+    setSearched(false);
+    try {
+      const found = await verifySignatureQueryAsync(query);
+      setResult(found);
+      setSearched(true);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getDistrictName = (code: string) => {
@@ -65,6 +74,7 @@ export const VerifyModal: React.FC<VerifyModalProps> = ({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t.searchPlaceholder}
+              disabled={loading}
               className="w-full pl-11 pr-4 py-3 rounded-xl bg-stone-950 border border-stone-700 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500 uppercase tracking-wider text-sm"
             />
             <Search className="w-5 h-5 text-stone-500 absolute left-3.5 top-3.5" />
@@ -72,10 +82,15 @@ export const VerifyModal: React.FC<VerifyModalProps> = ({
 
           <button
             type="submit"
-            className="w-full py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-bold text-sm transition flex items-center justify-center gap-2 cursor-pointer"
+            disabled={loading}
+            className="w-full py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-bold text-sm transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
-            <Search className="w-4 h-4" />
-            <span>{t.searchBtn}</span>
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Search className="w-4 h-4" />
+            )}
+            <span>{loading ? 'සොයමින්...' : t.searchBtn}</span>
           </button>
         </form>
 
