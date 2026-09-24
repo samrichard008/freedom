@@ -21,6 +21,8 @@ export const INITIAL_BASE_COUNT = 29201;
 
 // In-memory cache synced with Firestore and seeded with initial signatures
 let inMemorySignatures: Signature[] = [...INITIAL_30_SIGNATURES];
+let isBunnyLoaded = false;
+const activeCallbacks: Set<(signatures: Signature[]) => void> = new Set();
 
 // Initialize memory cache from localStorage on load with backward compatibility
 try {
@@ -48,6 +50,46 @@ try {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(inMemorySignatures));
 } catch (e) {
   console.warn('[PetitionStore] Could not read local storage cache', e);
+}
+
+// Background loading of large baseline from Bunny.net CDN
+async function loadFromBunnyCdn() {
+  if (isBunnyLoaded) return;
+  try {
+    console.log('[BunnyCDN] Loading signature baseline from CDN...');
+    const response = await fetch('https://gnanasara-petition.b-cdn.net/signatures_db.json');
+    if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+    const data = await response.json();
+    if (Array.isArray(data) && data.length > 0) {
+      isBunnyLoaded = true;
+      console.log(`[BunnyCDN] Loaded ${data.length} signatures from CDN successfully!`);
+      
+      const map = new Map<string, Signature>();
+      // First populate with Bunny CDN baseline
+      data.forEach((s: any) => {
+        if (s && s.id) map.set(s.id, s);
+      });
+      // Then overwrite with any local/recent signatures (to make sure recent submissions are not lost)
+      inMemorySignatures.forEach((s: Signature) => {
+        if (s && s.id) map.set(s.id, s);
+      });
+      
+      inMemorySignatures = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      
+      saveStoredSignatures(inMemorySignatures);
+      
+      // Notify all active subscribers
+      activeCallbacks.forEach(cb => {
+        try {
+          cb(inMemorySignatures);
+        } catch {}
+      });
+    }
+  } catch (err) {
+    console.warn('[BunnyCDN] Failed to load signature baseline from CDN, falling back to local storage cache', err);
+  }
 }
 
 function calculateDistrictCounts(signatures: Signature[]): Record<string, number> {
@@ -128,12 +170,19 @@ async function ensureFirestoreSummarySynced(currentSignatures: Signature[]) {
  * If quota is exhausted or client is offline, safely falls back to local cache without throwing errors.
  */
 export function subscribeToSignatures(callback: (signatures: Signature[]) => void): Unsubscribe {
+  activeCallbacks.add(callback);
+
   // Send current baseline state immediately to prevent 0 count on first render
   callback(inMemorySignatures);
 
+  // Trigger non-blocking background fetch from Bunny CDN
+  loadFromBunnyCdn().catch(() => {});
+
   // If quota limit was already reached, do not open failing network streams
   if (isQuotaExhausted()) {
-    return () => {};
+    return () => {
+      activeCallbacks.delete(callback);
+    };
   }
 
   // Test connection once non-blockingly
@@ -237,13 +286,16 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
 
     return () => {
       unsubs.forEach(fn => fn());
+      activeCallbacks.delete(callback);
     };
   } catch (err: any) {
     if (err?.code === 'resource-exhausted' || (typeof err?.message === 'string' && err.message.includes('Quota limit exceeded'))) {
       handleQuotaExhausted();
     }
     callback(inMemorySignatures);
-    return () => {};
+    return () => {
+      activeCallbacks.delete(callback);
+    };
   }
 }
 
