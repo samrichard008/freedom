@@ -1,16 +1,5 @@
 import { Signature, PetitionStats } from '../types';
-import { db, testFirestoreConnection, isQuotaExhausted, handleQuotaExhausted } from '../lib/firebase';
 import { INITIAL_30_SIGNATURES } from './initialSignatures';
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  limit,
-  Unsubscribe 
-} from 'firebase/firestore';
 
 // Storage key for caching and offline fallback
 const STORAGE_KEY = 'gnanasara_petition_signatures_live_v6';
@@ -19,8 +8,9 @@ const STORAGE_KEY = 'gnanasara_petition_signatures_live_v6';
 export const PETITION_TARGET = 5000000;
 export const INITIAL_BASE_COUNT = 29201;
 
-// In-memory cache synced with Firestore and seeded with initial signatures
+// In-memory cache synced with API and seeded with initial signatures
 let inMemorySignatures: Signature[] = [...INITIAL_30_SIGNATURES];
+let bunnyBaseline: Signature[] = [];
 let isBunnyLoaded = false;
 const activeCallbacks: Set<(signatures: Signature[]) => void> = new Set();
 
@@ -47,7 +37,9 @@ try {
   inMemorySignatures = Array.from(map.values()).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(inMemorySignatures));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(inMemorySignatures.slice(0, 100)));
+  } catch {}
 } catch (e) {
   console.warn('[PetitionStore] Could not read local storage cache', e);
 }
@@ -62,11 +54,12 @@ async function loadFromBunnyCdn() {
     const data = await response.json();
     if (Array.isArray(data) && data.length > 0) {
       isBunnyLoaded = true;
+      bunnyBaseline = data;
       console.log(`[BunnyCDN] Loaded ${data.length} signatures from CDN successfully!`);
       
       const map = new Map<string, Signature>();
       // First populate with Bunny CDN baseline
-      data.forEach((s: any) => {
+      bunnyBaseline.forEach((s: any) => {
         if (s && s.id) map.set(s.id, s);
       });
       // Then overwrite with any local/recent signatures (to make sure recent submissions are not lost)
@@ -88,7 +81,55 @@ async function loadFromBunnyCdn() {
       });
     }
   } catch (err) {
-    console.warn('[BunnyCDN] Failed to load signature baseline from CDN, falling back to local storage cache', err);
+    console.warn('[BunnyCDN] Failed to load signature baseline from CDN', err);
+  }
+}
+
+// Fetch any new signatures from our backend API
+async function fetchFromApi() {
+  try {
+    const res = await fetch('/api/signatures');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const result = await res.json();
+    
+    if (result && Array.isArray(result.signatures)) {
+      const apiSignatures: Signature[] = result.signatures;
+      
+      const map = new Map<string, Signature>();
+      // 1. Load from baseline
+      if (bunnyBaseline.length > 0) {
+        bunnyBaseline.forEach(s => map.set(s.id, s));
+      } else {
+        INITIAL_30_SIGNATURES.forEach(s => map.set(s.id, s));
+      }
+      
+      // 2. Load from API (new database submissions)
+      apiSignatures.forEach((s) => {
+        if (s && s.id) map.set(s.id, s);
+      });
+      
+      // 3. Merge current in-memory / local offline signatures
+      inMemorySignatures.forEach((s) => {
+        if (s && s.id && !map.has(s.id)) {
+          map.set(s.id, s);
+        }
+      });
+      
+      inMemorySignatures = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      
+      saveStoredSignatures(inMemorySignatures);
+      
+      // Notify all active subscribers
+      activeCallbacks.forEach(cb => {
+        try {
+          cb(inMemorySignatures);
+        } catch {}
+      });
+    }
+  } catch (err) {
+    console.warn('[API] Failed to fetch signatures from API:', err);
   }
 }
 
@@ -107,7 +148,9 @@ export function getStoredSignatures(): Signature[] {
 export function saveStoredSignatures(signatures: Signature[]) {
   inMemorySignatures = signatures;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(signatures));
+    // Only save the latest 100 signatures to localStorage to prevent QuotaExceededError (5MB browser limit)
+    const lightweightCache = signatures.slice(0, 100);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweightCache));
   } catch (e) {
     console.error('Error saving signatures to localStorage', e);
   }
@@ -137,39 +180,10 @@ export function getPetitionStats(): PetitionStats {
   return calculateStats(inMemorySignatures);
 }
 
-// Auto-sync baseline signatures to Firestore summary document when network/quota is available
-async function ensureFirestoreSummarySynced(currentSignatures: Signature[]) {
-  if (isQuotaExhausted()) return;
-  try {
-    const summaryRef = doc(db, 'petition_meta', 'summary');
-    await setDoc(summaryRef, {
-      count: currentSignatures.length,
-      recentSigners: currentSignatures.slice(0, 20).map(s => ({
-        id: s.id,
-        fullName: s.fullName,
-        nic: s.nic,
-        phone: s.phone,
-        district: s.district,
-        comment: s.comment || '',
-        createdAt: s.createdAt,
-        verified: true
-      })),
-      districtCounts: calculateDistrictCounts(currentSignatures),
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
-    console.log('[Firebase] Successfully auto-synced summary with', currentSignatures.length, 'signatures.');
-  } catch (err: any) {
-    if (err?.code === 'resource-exhausted' || (typeof err?.message === 'string' && err.message.includes('Quota limit exceeded'))) {
-      handleQuotaExhausted();
-    }
-  }
-}
-
 /**
- * Real-time subscription to Firebase Firestore.
- * If quota is exhausted or client is offline, safely falls back to local cache without throwing errors.
+ * Real-time active subscription simulation using optimized polling from Express/Vercel PostgreSQL API.
  */
-export function subscribeToSignatures(callback: (signatures: Signature[]) => void): Unsubscribe {
+export function subscribeToSignatures(callback: (signatures: Signature[]) => void): () => void {
   activeCallbacks.add(callback);
 
   // Send current baseline state immediately to prevent 0 count on first render
@@ -178,130 +192,22 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
   // Trigger non-blocking background fetch from Bunny CDN
   loadFromBunnyCdn().catch(() => {});
 
-  // If quota limit was already reached, do not open failing network streams
-  if (isQuotaExhausted()) {
-    return () => {
-      activeCallbacks.delete(callback);
-    };
-  }
+  // Trigger initial fetch from database API
+  fetchFromApi().catch(() => {});
 
-  // Test connection once non-blockingly
-  testFirestoreConnection().catch(() => {});
+  // Set up polling interval to check for new signatures every 12 seconds
+  const interval = setInterval(() => {
+    fetchFromApi().catch(() => {});
+  }, 12000);
 
-  let unsubs: Array<() => void> = [];
-
-  try {
-    // 1. Subscribe to aggregated summary document (1 document read!)
-    const summaryDocRef = doc(db, 'petition_meta', 'summary');
-    const unsubSummary = onSnapshot(
-      summaryDocRef,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data && typeof data.count === 'number' && data.count >= inMemorySignatures.length) {
-            if (Array.isArray(data.recentSigners) && data.recentSigners.length > 0) {
-              const map = new Map<string, Signature>();
-              inMemorySignatures.forEach(s => map.set(s.id, s));
-              data.recentSigners.forEach((s: any) => {
-                if (s && s.id) {
-                  map.set(s.id, {
-                    id: s.id,
-                    fullName: s.fullName || '',
-                    nic: s.nic || '',
-                    phone: s.phone || '',
-                    district: s.district || 'colombo',
-                    comment: s.comment || undefined,
-                    createdAt: s.createdAt || new Date().toISOString(),
-                    verified: true
-                  });
-                }
-              });
-              const merged = Array.from(map.values()).sort(
-                (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-              );
-              saveStoredSignatures(merged);
-              callback(merged);
-              return;
-            }
-          } else {
-            // Firestore summary count is lower than inMemory baseline (e.g. after fresh baseline update)
-            ensureFirestoreSummarySynced(inMemorySignatures).catch(() => {});
-          }
-        } else {
-          // Summary doc does not exist yet in Firestore
-          ensureFirestoreSummarySynced(inMemorySignatures).catch(() => {});
-        }
-      },
-      (error: any) => {
-        if (error?.code === 'resource-exhausted' || (typeof error?.message === 'string' && error.message.includes('Quota limit exceeded'))) {
-          handleQuotaExhausted();
-        }
-        callback(inMemorySignatures);
-      }
-    );
-    unsubs.push(unsubSummary);
-
-    // 2. Also listen for the latest 20 signatures directly
-    const colRef = collection(db, 'signatures');
-    const q = query(colRef, orderBy('createdAt', 'desc'), limit(20));
-
-    const unsubSignatures = onSnapshot(
-      q,
-      (snapshot) => {
-        const list: Signature[] = [];
-        snapshot.forEach((d) => {
-          const data = d.data();
-          list.push({
-            id: data.id || d.id,
-            fullName: data.fullName || '',
-            nic: data.nic || '',
-            phone: data.phone || '',
-            district: data.district || 'colombo',
-            comment: data.comment || undefined,
-            signatureDataUrl: data.signatureDataUrl || undefined,
-            createdAt: data.createdAt || new Date().toISOString(),
-            verified: data.verified !== false
-          });
-        });
-
-        if (list.length > 0) {
-          const map = new Map<string, Signature>();
-          inMemorySignatures.forEach(s => map.set(s.id, s));
-          list.forEach(s => map.set(s.id, s));
-          const merged = Array.from(map.values()).sort(
-            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-          saveStoredSignatures(merged);
-          callback(merged);
-        }
-      },
-      (error: any) => {
-        if (error?.code === 'resource-exhausted' || (typeof error?.message === 'string' && error.message.includes('Quota limit exceeded'))) {
-          handleQuotaExhausted();
-        }
-        callback(inMemorySignatures);
-      }
-    );
-    unsubs.push(unsubSignatures);
-
-    return () => {
-      unsubs.forEach(fn => fn());
-      activeCallbacks.delete(callback);
-    };
-  } catch (err: any) {
-    if (err?.code === 'resource-exhausted' || (typeof err?.message === 'string' && err.message.includes('Quota limit exceeded'))) {
-      handleQuotaExhausted();
-    }
-    callback(inMemorySignatures);
-    return () => {
-      activeCallbacks.delete(callback);
-    };
-  }
+  return () => {
+    clearInterval(interval);
+    activeCallbacks.delete(callback);
+  };
 }
 
 /**
- * Adds a new signature directly and updates local cache & cloud summary.
- * If Firestore quota is exhausted, seamlessly writes to local storage without hanging.
+ * Adds a new signature via our dual Express/Vercel Backend API.
  */
 export async function addSignatureAsync(data: {
   fullName: string;
@@ -320,76 +226,68 @@ export async function addSignatureAsync(data: {
     return {
       success: false,
       signature: alreadySigned,
-      error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සන් කර ඇත / This NIC has already signed this petition.'
-    };
-  }
-
-  const newSignature: Signature = {
-    id: generatePetitionId(),
-    fullName: data.fullName.trim(),
-    nic: trimmedNic,
-    phone: data.phone.trim(),
-    district: data.district,
-    comment: data.comment?.trim() || '',
-    signatureDataUrl: data.signatureDataUrl || '',
-    createdAt: new Date().toISOString(),
-    verified: true
-  };
-
-  // Synchronously update local cache so UI is instantaneous on current device
-  const updated = [newSignature, ...currentSignatures.filter(s => s.id !== newSignature.id)];
-  saveStoredSignatures(updated);
-
-  // If quota limit has already been marked as exhausted, skip network call and return success
-  if (isQuotaExhausted()) {
-    return {
-      success: true,
-      signature: newSignature
+      error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සன் කර ඇත / This NIC has already signed this petition.'
     };
   }
 
   try {
-    // Attempt Firestore write with a 2-second timeout to avoid backoff hang
-    const writePromise = async () => {
-      const docRef = doc(db, 'signatures', newSignature.id);
-      await setDoc(docRef, newSignature);
+    const res = await fetch('/api/add-signature', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(data)
+    });
 
-      const summaryRef = doc(db, 'petition_meta', 'summary');
-      await setDoc(summaryRef, {
-        count: updated.length,
-        recentSigners: updated.slice(0, 10).map(s => ({
-          id: s.id,
-          fullName: s.fullName,
-          nic: s.nic,
-          phone: s.phone,
-          district: s.district,
-          comment: s.comment || '',
-          createdAt: s.createdAt,
-          verified: true
-        })),
-        districtCounts: calculateDistrictCounts(updated),
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-    };
+    const result = await res.json();
+    if (!res.ok || !result.success) {
+      throw new Error(result.error || 'Failed to submit signature');
+    }
 
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Firestore timeout')), 2000)
-    );
+    const newSignature: Signature = result.signature;
 
-    await Promise.race([writePromise(), timeoutPromise]);
+    // Synchronously update local cache so UI is instantaneous on current device
+    const updated = [newSignature, ...currentSignatures.filter(s => s.id !== newSignature.id)];
+    saveStoredSignatures(updated);
+
+    activeCallbacks.forEach(cb => {
+      try {
+        cb(updated);
+      } catch {}
+    });
 
     return {
       success: true,
       signature: newSignature
     };
   } catch (err: any) {
-    if (err?.code === 'resource-exhausted' || (typeof err?.message === 'string' && err.message.includes('Quota limit exceeded'))) {
-      handleQuotaExhausted();
-    }
-    // Saved locally, so always succeed for the end user
+    console.warn('[API] Error submitting signature, saving to local fallback storage...', err);
+    
+    // Offline/Error Local Fallback: Create signature locally so the user experience is flawless
+    const fallbackSignature: Signature = {
+      id: generatePetitionId(),
+      fullName: data.fullName.trim(),
+      nic: trimmedNic,
+      phone: data.phone.trim(),
+      district: data.district,
+      comment: data.comment?.trim() || '',
+      signatureDataUrl: data.signatureDataUrl || '',
+      createdAt: new Date().toISOString(),
+      verified: true
+    };
+
+    const updated = [fallbackSignature, ...currentSignatures.filter(s => s.id !== fallbackSignature.id)];
+    saveStoredSignatures(updated);
+
+    activeCallbacks.forEach(cb => {
+      try {
+        cb(updated);
+      } catch {}
+    });
+
     return {
       success: true,
-      signature: newSignature
+      signature: fallbackSignature
     };
   }
 }
@@ -411,7 +309,7 @@ export function addSignature(data: {
     return {
       success: false,
       signature: alreadySigned,
-      error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සන් කර ඇත / This NIC has already signed this petition.'
+      error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සன் කර ඇත / This NIC has already signed this petition.'
     };
   }
 
