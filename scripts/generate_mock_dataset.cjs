@@ -150,7 +150,7 @@ function generatePhone() {
   return `${prefix}${num}`;
 }
 
-const TOTAL_NEW_TARGET = 15425; // 15425 new + 60 existing = 15485 signatures!
+const TOTAL_NEW_TARGET = 29141; // 29141 new + 60 existing = 29201 signatures!
 const generated = [];
 
 // Base time: between 4 days ago and 1 hour ago

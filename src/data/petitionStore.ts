@@ -13,11 +13,11 @@ import {
 } from 'firebase/firestore';
 
 // Storage key for caching and offline fallback
-const STORAGE_KEY = 'gnanasara_petition_signatures_live_v5';
+const STORAGE_KEY = 'gnanasara_petition_signatures_live_v6';
 
 // Base target: 5,000,000 (50 Lakhs)
 export const PETITION_TARGET = 5000000;
-export const INITIAL_BASE_COUNT = 15485;
+export const INITIAL_BASE_COUNT = 29201;
 
 // In-memory cache synced with Firestore and seeded with initial signatures
 let inMemorySignatures: Signature[] = [...INITIAL_30_SIGNATURES];
