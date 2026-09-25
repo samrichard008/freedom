@@ -157,7 +157,9 @@ export function saveStoredSignatures(signatures: Signature[]) {
 }
 
 export function calculateStats(signatures: Signature[]): PetitionStats {
-  const currentCount = signatures.length;
+  const baseCount = signatures.length;
+  // Add the 42,000 offline physical petition count as requested by the user
+  const currentCount = baseCount + 42000;
   const percentage = currentCount === 0 ? 0 : Math.min(100, Number(((currentCount / PETITION_TARGET) * 100).toFixed(4)));
 
   const districtStats = calculateDistrictCounts(signatures);
@@ -220,8 +222,9 @@ export async function addSignatureAsync(data: {
   const trimmedNic = data.nic.trim().toUpperCase();
   const currentSignatures = getStoredSignatures();
 
-  // Check duplicate NIC
-  const alreadySigned = currentSignatures.find(s => s.nic.toUpperCase() === trimmedNic);
+  // Check duplicate NIC client-side using masked value comparison
+  const maskedInput = maskNic(trimmedNic).toUpperCase();
+  const alreadySigned = currentSignatures.find(s => s.nic.toUpperCase() === maskedInput);
   if (alreadySigned) {
     return {
       success: false,

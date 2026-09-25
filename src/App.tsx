@@ -22,7 +22,7 @@ import { Database, Play, RefreshCw, CheckCircle, AlertTriangle, ArrowLeft, Termi
 
 // Migration Dashboard sub-component
 function MigrationDashboard() {
-  const [logs, setLogs] = useState<string[]>(['[System] Migration Dashboard initialized. Click "Start Migration" to begin.']);
+  const [logs, setLogs] = useState<string[]>(['[System] Migration Dashboard initialized. Choose a method below to begin.']);
   const [isMigrating, setIsMigrating] = useState(false);
   const [totalFetched, setTotalFetched] = useState(0);
   const [totalNew, setTotalNew] = useState(0);
@@ -30,6 +30,8 @@ function MigrationDashboard() {
   const [batchLimit, setBatchLimit] = useState(1000);
   const [errorMsg, setErrorMsg] = useState('');
   const [lastId, setLastId] = useState<string | null>(null);
+  const [localOffset, setLocalOffset] = useState(0);
+  const [migrationType, setMigrationType] = useState<'local' | 'firebase'>('local');
 
   const addLog = (msg: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -37,10 +39,79 @@ function MigrationDashboard() {
   };
 
   const handleStartMigration = async () => {
+    if (migrationType === 'local') {
+      await handleLocalBackupMigration();
+    } else {
+      await handleFirebaseMigration();
+    }
+  };
+
+  const handleLocalBackupMigration = async () => {
     if (isMigrating) return;
     setIsMigrating(true);
     setStatus('running');
-    addLog(`Starting migration batch processing (Limit: ${batchLimit})...`);
+    addLog(`Starting local backup migration batch processing (Offset: ${localOffset}, Limit: ${batchLimit})...`);
+
+    let currentOffset = localOffset;
+
+    try {
+      while (true) {
+        addLog(`Processing batch starting from offset ${currentOffset}...`);
+        const url = `/api/migrate-local-backup?offset=${currentOffset}&limit=${batchLimit}`;
+        
+        const response = await fetch(url);
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'API returned failure status');
+        }
+
+        const count = data.count || 0;
+        const newlyMigrated = data.migratedCount || 0;
+        const nextOffset = data.nextOffset;
+
+        if (count === 0) {
+          addLog('🎉 Local backup migration complete! All local signatures merged.');
+          setStatus('completed');
+          setIsMigrating(false);
+          break;
+        }
+
+        setTotalFetched(prev => prev + count);
+        setTotalNew(prev => prev + newlyMigrated);
+        setLocalOffset(nextOffset);
+        currentOffset = nextOffset;
+
+        addLog(`✅ Batch Success: Processed ${count} local signatures. Newly inserted: ${newlyMigrated}. Duplicates skipped: ${count - newlyMigrated}.`);
+
+        // Give the database / Vercel some breathing room
+        await new Promise(r => setTimeout(r, 400));
+
+        if (!nextOffset || nextOffset >= data.totalInBackup) {
+          addLog('🎉 Local backup migration complete! All local signatures merged successfully.');
+          setStatus('completed');
+          setIsMigrating(false);
+          break;
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || String(err));
+      setStatus('error');
+      setIsMigrating(false);
+      addLog(`❌ Critical Error: ${err.message || String(err)}`);
+    }
+  };
+
+  const handleFirebaseMigration = async () => {
+    if (isMigrating) return;
+    setIsMigrating(true);
+    setStatus('running');
+    addLog(`Starting Firebase live database migration batch processing (Limit: ${batchLimit})...`);
 
     let currentLastId = lastId;
 
@@ -65,7 +136,7 @@ function MigrationDashboard() {
         const currentLast = data.lastId || null;
 
         if (count === 0) {
-          addLog('🎉 Migration complete! No more signatures left in Firebase.');
+          addLog('🎉 Firebase migration complete! No more signatures left in Firebase.');
           setStatus('completed');
           setIsMigrating(false);
           break;
@@ -82,7 +153,7 @@ function MigrationDashboard() {
         await new Promise(r => setTimeout(r, 600));
 
         if (!currentLast) {
-          addLog('🎉 Migration complete! Reached the end of the Firebase collection.');
+          addLog('🎉 Firebase migration complete! Reached the end of the Firebase collection.');
           setStatus('completed');
           setIsMigrating(false);
           break;
@@ -105,7 +176,7 @@ function MigrationDashboard() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-amber-500">Firebase to PostgreSQL Database Migration</h1>
-          <p className="text-sm text-stone-400">Migrate all 42,000+ live signatures safely in real-time batch queries</p>
+          <p className="text-sm text-stone-400">Migrate and merge all live signatures into your high-performance PostgreSQL database</p>
         </div>
       </div>
 
@@ -115,17 +186,50 @@ function MigrationDashboard() {
         <div className="text-sm">
           <p className="font-semibold text-amber-400">அறிவுறுத்தல் (Tamil Translation Note)</p>
           <p className="text-stone-300 mt-1">
-            மச்சான், இந்த டூல் மூலம் உங்கள் Firebase-ல் உள்ள அனைத்து பழைய கையොப்பங்களையும் உங்களது புதிய PostgreSQL-க்கு மாற்றலாம். 
-            இது **"ON CONFLICT DO NOTHING"** மூலம் இயங்குவதால், ஏற்கனவே இருக்கும் கையොப்பங்கள் மீண்டும் மீண்டும் பதிவாகாது. 
-            எனவே எப்போது வேண்டுமானாலும் பயமின்றி இயக்கலாம்!
+            மச்சான், Firebase இலவச வரம்பு (Daily Quota) முடிந்திருந்தாலும் கவலைப்பட வேண்டாம்!
+            நமது சர்வரில் உள்ள **29,201 கையொப்பங்களின் பேக்கப்பை (Local Backup)** இப்போதே நேரடியாகவும் அதிவேகமாகவும் PostgreSQL-க்கு மாற்றிவிடலாம்! 
+            அதன்பின் ஃபயர்பேஸ் லிமிட் ரீசெட் ஆனதும் மீதமுள்ள லைவ் கையொப்பங்களையும் இதனுடன் இணைத்துக்கொள்ளலாம்!
           </p>
         </div>
+      </div>
+
+      {/* Migration Method Selector */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <button
+          type="button"
+          onClick={() => { setMigrationType('local'); setTotalFetched(0); setTotalNew(0); setStatus('idle'); }}
+          disabled={isMigrating}
+          className={`p-4 rounded-xl border text-left transition flex flex-col justify-between ${migrationType === 'local' ? 'border-amber-500 bg-amber-500/5' : 'border-stone-800 bg-stone-950/40 hover:bg-stone-900'}`}
+        >
+          <div>
+            <span className="text-xs text-amber-500 font-bold uppercase tracking-wider block mb-1">Method A (Instant & Safe)</span>
+            <span className="text-sm font-bold text-stone-200">Local Backup File (29,201 signatures)</span>
+            <p className="text-xs text-stone-400 mt-1">
+              Bypasses Firebase completely. Instantly imports 29,201 signatures from backup in seconds!
+            </p>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setMigrationType('firebase'); setTotalFetched(0); setTotalNew(0); setStatus('idle'); }}
+          disabled={isMigrating}
+          className={`p-4 rounded-xl border text-left transition flex flex-col justify-between ${migrationType === 'firebase' ? 'border-amber-500 bg-amber-500/5' : 'border-stone-800 bg-stone-950/40 hover:bg-stone-900'}`}
+        >
+          <div>
+            <span className="text-xs text-amber-500 font-bold uppercase tracking-wider block mb-1">Method B (Live Stream)</span>
+            <span className="text-sm font-bold text-stone-200">Firebase Live Database</span>
+            <p className="text-xs text-stone-400 mt-1">
+              Connects to Live Firebase Firestore. Best to run once the daily quota resets or is active.
+            </p>
+          </div>
+        </button>
       </div>
 
       {/* Stats Counter */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-stone-950 p-4 rounded-xl border border-stone-800">
-          <p className="text-xs text-stone-500 uppercase tracking-wider">Processed From Firebase</p>
+          <p className="text-xs text-stone-500 uppercase tracking-wider">Processed Total</p>
           <p className="text-2xl font-extrabold mt-1 text-stone-200">{totalFetched.toLocaleString()}</p>
         </div>
         <div className="bg-stone-950 p-4 rounded-xl border border-stone-800">
@@ -179,7 +283,7 @@ function MigrationDashboard() {
             ) : (
               <>
                 <Play className="w-4 h-4" />
-                Start Migration
+                Start {migrationType === 'local' ? 'Backup' : 'Live'} Migration
               </>
             )}
           </button>
