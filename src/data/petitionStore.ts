@@ -211,6 +211,37 @@ export function subscribeToSignatures(callback: (signatures: Signature[]) => voi
 /**
  * Adds a new signature via our dual Express/Vercel Backend API.
  */
+// To check if NIC has signed on this device
+export function hasSignedOnThisDevice(nic: string): boolean {
+  try {
+    const signedNicsStr = localStorage.getItem('gnanasara_signed_nics_local');
+    if (signedNicsStr) {
+      const nics = JSON.parse(signedNicsStr);
+      if (Array.isArray(nics) && nics.includes(nic.trim().toUpperCase())) {
+        return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
+export function recordNicSignedOnThisDevice(nic: string) {
+  try {
+    const signedNicsStr = localStorage.getItem('gnanasara_signed_nics_local') || '[]';
+    const nics = JSON.parse(signedNicsStr);
+    if (Array.isArray(nics)) {
+      const clean = nic.trim().toUpperCase();
+      if (!nics.includes(clean)) {
+        nics.push(clean);
+        localStorage.setItem('gnanasara_signed_nics_local', JSON.stringify(nics));
+      }
+    }
+  } catch {}
+}
+
+/**
+ * Adds a new signature via our dual Express/Vercel Backend API.
+ */
 export async function addSignatureAsync(data: {
   fullName: string;
   nic: string;
@@ -222,13 +253,21 @@ export async function addSignatureAsync(data: {
   const trimmedNic = data.nic.trim().toUpperCase();
   const currentSignatures = getStoredSignatures();
 
-  // Check duplicate NIC client-side using masked value comparison
-  const maskedInput = maskNic(trimmedNic).toUpperCase();
-  const alreadySigned = currentSignatures.find(s => s.nic.toUpperCase() === maskedInput);
-  if (alreadySigned) {
+  // Check duplicate NIC client-side securely (only if they signed on this device)
+  if (hasSignedOnThisDevice(trimmedNic)) {
+    // Find the local matching signature to return or create a dummy structure
+    const alreadySigned = currentSignatures.find(s => s.nic.toUpperCase() === trimmedNic) || {
+      id: 'ALREADY-SIGNED',
+      fullName: data.fullName,
+      nic: trimmedNic,
+      phone: data.phone,
+      district: data.district,
+      createdAt: new Date().toISOString(),
+      verified: true
+    };
     return {
       success: false,
-      signature: alreadySigned,
+      signature: alreadySigned as Signature,
       error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සன் කර ඇත / This NIC has already signed this petition.'
     };
   }
@@ -248,6 +287,7 @@ export async function addSignatureAsync(data: {
     }
 
     const newSignature: Signature = result.signature;
+    recordNicSignedOnThisDevice(trimmedNic);
 
     // Synchronously update local cache so UI is instantaneous on current device
     const updated = [newSignature, ...currentSignatures.filter(s => s.id !== newSignature.id)];
@@ -279,6 +319,8 @@ export async function addSignatureAsync(data: {
       verified: true
     };
 
+    recordNicSignedOnThisDevice(trimmedNic);
+
     const updated = [fallbackSignature, ...currentSignatures.filter(s => s.id !== fallbackSignature.id)];
     saveStoredSignatures(updated);
 
@@ -307,11 +349,19 @@ export function addSignature(data: {
   const trimmedNic = data.nic.trim().toUpperCase();
   const currentSignatures = getStoredSignatures();
 
-  const alreadySigned = currentSignatures.find(s => s.nic.toUpperCase() === trimmedNic);
-  if (alreadySigned) {
+  if (hasSignedOnThisDevice(trimmedNic)) {
+    const alreadySigned = currentSignatures.find(s => s.nic.toUpperCase() === trimmedNic) || {
+      id: 'ALREADY-SIGNED',
+      fullName: data.fullName,
+      nic: trimmedNic,
+      phone: data.phone,
+      district: data.district,
+      createdAt: new Date().toISOString(),
+      verified: true
+    };
     return {
       success: false,
-      signature: alreadySigned,
+      signature: alreadySigned as Signature,
       error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සன் කර ඇත / This NIC has already signed this petition.'
     };
   }
@@ -327,6 +377,8 @@ export function addSignature(data: {
     createdAt: new Date().toISOString(),
     verified: true
   };
+
+  recordNicSignedOnThisDevice(trimmedNic);
 
   const updated = [newSignature, ...currentSignatures];
   saveStoredSignatures(updated);
