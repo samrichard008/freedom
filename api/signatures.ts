@@ -35,9 +35,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const list = await getAllNewSignatures();
     const safeList = list.map(s => ({
-      ...s,
+      id: s.id,
+      fullName: s.fullName,
       nic: maskNicServer(s.nic),
-      phone: maskPhoneServer(s.phone)
+      district: s.district,
+      comment: s.comment,
+      createdAt: s.createdAt,
+      verified: s.verified
     }));
     res.status(200).json({ success: true, signatures: safeList });
   } catch (err: any) {
