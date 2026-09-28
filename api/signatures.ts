@@ -27,6 +27,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
+  // Set aggressive CDN Edge Cache control to prevent serverless function executions and database hits
+  res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=20, stale-while-revalidate=10');
+
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
