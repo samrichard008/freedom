@@ -1,6 +1,6 @@
-import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
+import https from 'https';
 
 // Define the Signature interface
 export interface DBResponseSignature {
@@ -16,160 +16,294 @@ export interface DBResponseSignature {
 }
 
 const LOCAL_JSON_DB_PATH = path.join(process.cwd(), 'local_signatures_db.json');
+const BACKUP_JSON_PATH = path.join(process.cwd(), 'public', 'gnanasara_petition_backup.json');
 
-// Initialize pg Connection Pool if connection string is provided
-const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-let pool: pg.Pool | null = null;
+// cPanel PHP API Bridge configuration
+const PHP_BRIDGE_URL = 'https://oneplanet.lk/signatures-api.php';
+const API_KEY = '5m_sig_petition_key_2026';
 
-if (connectionString) {
-  console.log('[PostgreSQL] Database connection URL found. Initializing PostgreSQL pool...');
-  pool = new pg.Pool({
-    connectionString,
-    ssl: connectionString.includes('localhost') || connectionString.includes('127.0.0.1') ? false : { rejectUnauthorized: false }
+// Bunny Storage CDN configuration
+const BUNNY_ENDPOINT = 'sg.storage.bunnycdn.com';
+const BUNNY_PATH = '/gnanasara-petition/signatures.json';
+const BUNNY_ACCESS_KEY = 'e09085cd-4065-4aa7-a543641e2577-a063-4a05';
+
+// Helper to fetch from Bunny Storage
+async function fetchFromBunnyStorage(): Promise<DBResponseSignature[]> {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: BUNNY_ENDPOINT,
+      path: BUNNY_PATH,
+      method: 'GET',
+      headers: {
+        'AccessKey': BUNNY_ACCESS_KEY,
+        'Accept': 'application/json'
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            const parsed = JSON.parse(data);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              console.log(`[BunnyDB] Successfully fetched ${parsed.length} signatures from Bunny Storage!`);
+              resolve(parsed);
+              return;
+            }
+          } catch (e) {
+            console.error('[BunnyDB] Error parsing JSON from Bunny Storage:', e);
+          }
+        }
+        resolve([]);
+      });
+    });
+
+    req.on('error', (err) => {
+      console.error('[BunnyDB] Fetch error:', err);
+      resolve([]);
+    });
+
+    req.end();
   });
-} else {
-  console.log('[LocalDB] No DATABASE_URL or POSTGRES_URL environment variables found.');
-  console.log(`[LocalDB] Falling back to robust local JSON database: ${LOCAL_JSON_DB_PATH}`);
 }
 
-// Ensure database table exists if using PostgreSQL
+// Helper to save to Bunny Storage
+async function saveToBunnyStorage(signatures: DBResponseSignature[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    const body = JSON.stringify(signatures, null, 2);
+    const options = {
+      hostname: BUNNY_ENDPOINT,
+      path: BUNNY_PATH,
+      method: 'PUT',
+      headers: {
+        'AccessKey': BUNNY_ACCESS_KEY,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+        console.log('[BunnyDB] Successfully saved signatures to Bunny Storage!');
+        resolve(true);
+      } else {
+        console.error(`[BunnyDB] Save failed with status ${res.statusCode}`);
+        resolve(false);
+      }
+    });
+
+    req.on('error', (err) => {
+      console.error('[BunnyDB] Save error:', err);
+      resolve(false);
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+// Local backup loader in case Bunny is brand new/empty
+function getLocalBackupSignatures(): DBResponseSignature[] {
+  try {
+    if (fs.existsSync(BACKUP_JSON_PATH)) {
+      const content = fs.readFileSync(BACKUP_JSON_PATH, 'utf-8');
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) {
+        return parsed as DBResponseSignature[];
+      }
+    }
+  } catch (err) {
+    console.error('[LocalDB] Error reading backup JSON:', err);
+  }
+  return [];
+}
+
+// Local JSON fallback utilities
+function getLocalSignaturesFallback(): DBResponseSignature[] {
+  try {
+    if (fs.existsSync(LOCAL_JSON_DB_PATH)) {
+      const fileContent = fs.readFileSync(LOCAL_JSON_DB_PATH, 'utf-8');
+      return JSON.parse(fileContent) as DBResponseSignature[];
+    }
+  } catch (err) {
+    console.error('[LocalDB] Error reading local JSON database fallback:', err);
+  }
+  return [];
+}
+
+function saveLocalSignaturesFallback(signatures: DBResponseSignature[]) {
+  try {
+    fs.writeFileSync(LOCAL_JSON_DB_PATH, JSON.stringify(signatures, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[LocalDB] Error writing local JSON database fallback:', err);
+  }
+}
+
+// Dummy setup check to keep interface consistency
 export async function ensureDatabaseSetup() {
-  if (pool) {
-    try {
-      const client = await pool.connect();
-      try {
-        console.log('[PostgreSQL] Ensuring signatures table exists...');
-        await client.query(`
-          CREATE TABLE IF NOT EXISTS signatures (
-            id VARCHAR(50) PRIMARY KEY,
-            full_name VARCHAR(255) NOT NULL,
-            nic VARCHAR(50) UNIQUE NOT NULL,
-            phone VARCHAR(50) NOT NULL,
-            district VARCHAR(100) NOT NULL,
-            comment TEXT,
-            signature_data_url TEXT,
-            created_at VARCHAR(50) NOT NULL,
-            verified BOOLEAN DEFAULT TRUE
-          );
-        `);
-        console.log('[PostgreSQL] Signatures table verified successfully!');
-      } finally {
-        client.release();
-      }
-    } catch (err) {
-      console.error('[PostgreSQL] Failed to setup PostgreSQL tables:', err);
-    }
-  } else {
-    // Local JSON setup
-    if (!fs.existsSync(LOCAL_JSON_DB_PATH)) {
-      try {
-        fs.writeFileSync(LOCAL_JSON_DB_PATH, JSON.stringify([], null, 2), 'utf-8');
-        console.log('[LocalDB] Created fresh local JSON database file.');
-      } catch (err) {
-        console.error('[LocalDB] Failed to create local JSON database:', err);
-      }
-    }
-  }
+  // Setup is handled by cPanel PHP script or Bunny Storage
 }
 
-// Fetch all signatures from DB (PostgreSQL or Local JSON)
+// Fetch all signatures
 export async function getAllNewSignatures(): Promise<DBResponseSignature[]> {
-  await ensureDatabaseSetup();
+  // 1. Try fetching from cPanel PHP Bridge (Primary & best option)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5 seconds timeout
 
-  if (pool) {
-    try {
-      const { rows } = await pool.query(`
-        SELECT 
-          id, 
-          full_name as "fullName", 
-          nic, 
-          phone, 
-          district, 
-          comment, 
-          signature_data_url as "signatureDataUrl", 
-          created_at as "createdAt", 
-          verified 
-        FROM signatures 
-        ORDER BY created_at DESC
-      `);
-      return rows;
-    } catch (err) {
-      console.error('[PostgreSQL] Error fetching signatures, falling back to empty list:', err);
-      return [];
-    }
-  } else {
-    try {
-      if (fs.existsSync(LOCAL_JSON_DB_PATH)) {
-        const fileContent = fs.readFileSync(LOCAL_JSON_DB_PATH, 'utf-8');
-        return JSON.parse(fileContent) as DBResponseSignature[];
+    const response = await fetch(PHP_BRIDGE_URL, {
+      method: 'GET',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.success && Array.isArray(data.signatures)) {
+        console.log('[PHP Bridge] Successfully fetched signatures from cPanel MySQL!');
+        return data.signatures;
       }
-    } catch (err) {
-      console.error('[LocalDB] Error reading local JSON database:', err);
     }
-    return [];
+  } catch (err) {
+    console.log('[PHP Bridge] Fetch failed (PHP script not uploaded or offline). Trying Bunny Storage...');
   }
+
+  // 2. Try fetching from Bunny Storage CDN (Free, no quota, unlimited scale)
+  const bunnyList = await fetchFromBunnyStorage();
+  if (bunnyList.length > 0) {
+    return bunnyList;
+  }
+
+  // If Bunny Storage is empty/new, try to pre-populate it with our 100% complete Local Backup
+  const localBackup = getLocalBackupSignatures();
+  if (localBackup.length > 0) {
+    console.log('[BunnyDB] Bunny Storage signatures.json is empty. Initializing with local backup signatures...');
+    await saveToBunnyStorage(localBackup);
+    return localBackup;
+  }
+
+  // 3. Absolute Fallback: Local JSON database
+  return getLocalSignaturesFallback();
 }
 
 // Add a new signature
 export async function addNewSignature(sig: DBResponseSignature): Promise<{ success: boolean; error?: string }> {
-  await ensureDatabaseSetup();
   const trimmedNic = sig.nic.trim().toUpperCase();
 
-  if (pool) {
-    try {
-      // Check duplicate NIC
-      const checkRes = await pool.query('SELECT id FROM signatures WHERE UPPER(nic) = $1', [trimmedNic]);
-      if (checkRes.rows.length > 0) {
-        return {
-          success: false,
-          error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සன் කර ඇත / This NIC has already signed this petition.'
-        };
-      }
+  // 1. Try saving to cPanel PHP Bridge (Primary)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout
 
-      // Insert signature
-      await pool.query(
-        `INSERT INTO signatures (id, full_name, nic, phone, district, comment, signature_data_url, created_at, verified)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [
-          sig.id,
-          sig.fullName,
-          trimmedNic,
-          sig.phone,
-          sig.district,
-          sig.comment || '',
-          sig.signatureDataUrl || '',
-          sig.createdAt,
-          sig.verified
-        ]
-      );
-      return { success: true };
-    } catch (err: any) {
-      console.error('[PostgreSQL] Error adding signature:', err);
-      if (err?.code === '23505') { // Duplicate key in Postgres
-        return {
-          success: false,
-          error: 'මෙම ජาතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සன் කර ඇත / This NIC has already signed this petition.'
-        };
-      }
-      return { success: false, error: err.message || 'Database error occurred' };
-    }
-  } else {
-    try {
-      const signatures = await getAllNewSignatures();
-      const checkDup = signatures.find(s => s.nic.toUpperCase() === trimmedNic);
-      if (checkDup) {
-        return {
-          success: false,
-          error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සன் කර ඇත / This NIC has already signed this petition.'
-        };
-      }
+    const response = await fetch(PHP_BRIDGE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${API_KEY}`
+      },
+      body: JSON.stringify(sig),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
 
-      signatures.unshift(sig); // Insert at the beginning (descending order)
-      fs.writeFileSync(LOCAL_JSON_DB_PATH, JSON.stringify(signatures, null, 2), 'utf-8');
-      return { success: true };
-    } catch (err: any) {
-      console.error('[LocalDB] Error adding signature:', err);
-      return { success: false, error: err.message || 'Local storage write error' };
+    const data = await response.json();
+    if (response.ok && data) {
+      if (data.success) {
+        console.log('[PHP Bridge] Successfully saved signature to cPanel MySQL!');
+        return { success: true };
+      } else if (data.error) {
+        return { success: false, error: data.error };
+      }
     }
+  } catch (err) {
+    console.log('[PHP Bridge] Save failed (PHP script not uploaded). Saving to Bunny Storage CDN...');
   }
+
+  // 2. Try saving to Bunny Storage CDN (Free, unlimited scale)
+  try {
+    let signatures = await fetchFromBunnyStorage();
+    if (signatures.length === 0) {
+      // Initialize with backup if empty
+      signatures = getLocalBackupSignatures();
+    }
+
+    // Check duplicate NIC
+    const isDuplicate = signatures.some(s => s.nic.trim().toUpperCase() === trimmedNic);
+    if (isDuplicate) {
+      return {
+        success: false,
+        error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සන් කර ඇත / This NIC has already signed this petition.'
+      };
+    }
+
+    // Save
+    signatures.unshift(sig);
+    const saveSuccess = await saveToBunnyStorage(signatures);
+    if (saveSuccess) {
+      return { success: true };
+    }
+  } catch (bunnyErr: any) {
+    console.error('[BunnyDB] Failed to save to Bunny Storage. Falling back to Local JSON:', bunnyErr);
+  }
+
+  // 3. Absolute Fallback: Local JSON database
+  try {
+    const signatures = getLocalSignaturesFallback();
+    const checkDup = signatures.find(s => s.nic.toUpperCase() === trimmedNic);
+    if (checkDup) {
+      return {
+        success: false,
+        error: 'මෙම ජාතික හැඳුනුම්පත් අංකයෙන් (NIC) දැනටමත් මෙම පෙත්සම අත්සන් කර ඇත / This NIC has already signed this petition.'
+      };
+    }
+
+    signatures.unshift(sig);
+    saveLocalSignaturesFallback(signatures);
+    return { success: true };
+  } catch (localErr: any) {
+    return { success: false, error: localErr.message || 'Local storage write error' };
+  }
+}
+
+// Fetch single signature by ID or NIC
+export async function getSignatureByIdOrNic(queryVal: string): Promise<DBResponseSignature | null> {
+  const trimmed = queryVal.trim().toUpperCase();
+
+  // 1. Try PHP Bridge
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    const response = await fetch(`${PHP_BRIDGE_URL}?query=${encodeURIComponent(trimmed)}`, {
+      method: 'GET',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.success && Array.isArray(data.signatures)) {
+        const found = data.signatures.find((s: any) => s.id.toUpperCase() === trimmed || s.nic.toUpperCase() === trimmed);
+        if (found) return found;
+      }
+    }
+  } catch (err) {
+    console.log('[PHP Bridge] Fetch single failed. Querying Bunny Storage...');
+  }
+
+  // 2. Query Bunny Storage
+  try {
+    const list = await fetchFromBunnyStorage();
+    const found = list.find(s => s.id.toUpperCase() === trimmed || s.nic.toUpperCase() === trimmed);
+    if (found) return found;
+  } catch (bunnyErr) {
+    console.error('[BunnyDB] Failed to query Bunny Storage:', bunnyErr);
+  }
+
+  // 3. Fallback: Local JSON
+  const list = getLocalSignaturesFallback();
+  const found = list.find(s => s.id.toUpperCase() === trimmed || s.nic.toUpperCase() === trimmed);
+  return found || null;
 }

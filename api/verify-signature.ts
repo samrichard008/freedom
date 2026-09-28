@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import pg from 'pg';
+import { getSignatureByIdOrNic } from '../api-lib/db.js';
 
 function maskNicServer(nic: string): string {
   if (!nic) return '';
@@ -38,31 +38,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-    if (!connectionString) {
-      return res.status(500).json({ success: false, error: 'PostgreSQL connection is not configured.' });
-    }
+    const sig = await getSignatureByIdOrNic(queryVal);
 
-    const pool = new pg.Pool({
-      connectionString,
-      ssl: { rejectUnauthorized: false }
-    });
-
-    const { rows } = await pool.query(
-      `SELECT id, full_name as "fullName", nic, phone, district, comment, signature_data_url as "signatureDataUrl", created_at as "createdAt", verified
-       FROM signatures
-       WHERE UPPER(id) = $1 OR UPPER(nic) = $2
-       LIMIT 1`,
-      [queryVal, queryVal]
-    );
-
-    await pool.end();
-
-    if (rows.length === 0) {
+    if (!sig) {
       return res.status(200).json({ success: true, found: false });
     }
 
-    const sig = rows[0];
     const safeSig = {
       ...sig,
       nic: maskNicServer(sig.nic),

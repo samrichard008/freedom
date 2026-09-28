@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, collection, query, orderBy, limit as limitQuery, getDocs, startAfter, doc, getDoc } from 'firebase/firestore';
-import pg from 'pg';
+import mysql from 'mysql2/promise';
 import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
 
 // Serve CORS and OPTION requests
@@ -30,17 +30,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
       : getFirestore(app);
 
-    // 2. Initialize pg Connection Pool
-    const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-    if (!connectionString) {
-      return res.status(500).json({ success: false, error: 'PostgreSQL connection string is missing in environment (DATABASE_URL).' });
-    }
-    const pool = new pg.Pool({
-      connectionString,
-      ssl: { rejectUnauthorized: false }
-    });
-
-    // 3. Prepare Firestore query
+    // 2. Prepare Firestore query
     let firestoreQuery = query(
       collection(firestoreDb, 'signatures'),
       orderBy('createdAt', 'asc'),
@@ -60,7 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // 4. Fetch signatures from Firestore
+    // 3. Fetch signatures from Firestore
     const querySnapshot = await getDocs(firestoreQuery);
     const signaturesToMigrate: any[] = [];
     let lastId: string | null = null;
@@ -82,7 +72,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     if (signaturesToMigrate.length === 0) {
-      await pool.end();
       return res.status(200).json({
         success: true,
         count: 0,
@@ -91,55 +80,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // 5. Connect to PG and insert signatures in a safe batch (ON CONFLICT DO NOTHING)
-    const client = await pool.connect();
+    // 4. Connect to MySQL and insert signatures in a safe batch
+    const MYSQL_HOST = process.env.MYSQL_HOST || '51.161.87.124';
+    const MYSQL_USER = process.env.MYSQL_USER || 'oneplane_freedom';
+    const MYSQL_PASSWORD = process.env.MYSQL_PASSWORD || '19850108@ASDasd';
+    const MYSQL_DATABASE = process.env.MYSQL_DATABASE || 'oneplane_freedom';
+    const MYSQL_PORT = parseInt(process.env.MYSQL_PORT || '3306', 10);
+
+    const connection = await mysql.createConnection({
+      host: MYSQL_HOST,
+      user: MYSQL_USER,
+      password: MYSQL_PASSWORD,
+      database: MYSQL_DATABASE,
+      port: MYSQL_PORT,
+      connectTimeout: 10000
+    });
+
     let migratedCount = 0;
     try {
       // First ensure the table exists
-      await client.query(`
+      await connection.query(`
         CREATE TABLE IF NOT EXISTS signatures (
           id VARCHAR(50) PRIMARY KEY,
-          full_name VARCHAR(255) NOT NULL,
+          full_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
           nic VARCHAR(50) UNIQUE NOT NULL,
           phone VARCHAR(50) NOT NULL,
-          district VARCHAR(100) NOT NULL,
-          comment TEXT,
-          signature_data_url TEXT,
+          district VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+          comment TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+          signature_data_url LONGTEXT,
           created_at VARCHAR(50) NOT NULL,
           verified BOOLEAN DEFAULT TRUE
-        );
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
 
       // Write each signature
       for (const sig of signaturesToMigrate) {
         if (!sig.nic) continue;
+        const trimmedNic = sig.nic.trim().toUpperCase();
         try {
-          const insertResult = await client.query(
+          // Check duplicate NIC
+          const [checkRes]: any = await connection.query('SELECT id FROM signatures WHERE UPPER(nic) = ?', [trimmedNic]);
+          if (checkRes && checkRes.length > 0) {
+            continue; // Skip duplicates
+          }
+
+          await connection.query(
             `INSERT INTO signatures (id, full_name, nic, phone, district, comment, signature_data_url, created_at, verified)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (nic) DO NOTHING`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               sig.id,
               sig.fullName,
-              sig.nic,
+              trimmedNic,
               sig.phone,
               sig.district,
               sig.comment || '',
               sig.signatureDataUrl || '',
               sig.createdAt,
-              sig.verified
+              sig.verified ? 1 : 0
             ]
           );
-          if (insertResult.rowCount && insertResult.rowCount > 0) {
-            migratedCount++;
-          }
+          migratedCount++;
         } catch (singleInsertErr) {
           console.warn('[Migration] Failed to insert row:', sig.id, singleInsertErr);
         }
       }
     } finally {
-      client.release();
-      await pool.end();
+      await connection.end();
     }
 
     res.status(200).json({
