@@ -18,7 +18,7 @@ import { ShareModal } from './components/ShareModal';
 import { AllSignaturesModal } from './components/AllSignaturesModal';
 import { MobileBottomBar } from './components/MobileBottomBar';
 import { Footer } from './components/Footer';
-import { Database, Play, RefreshCw, CheckCircle, AlertTriangle, ArrowLeft, Terminal, ShieldAlert } from 'lucide-react';
+import { Database, Play, RefreshCw, CheckCircle, AlertTriangle, ArrowLeft, Terminal, ShieldAlert, FileText } from 'lucide-react';
 
 // Migration Dashboard sub-component
 function MigrationDashboard() {
@@ -326,6 +326,47 @@ function MigrationDashboard() {
           </div>
         </div>
       )}
+
+      {/* 📥 One-Click Full Database Backup (Admin Section) */}
+      <div className="bg-stone-950 p-6 rounded-xl border border-stone-800 mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <Database className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-stone-200">One-Click Client Export Tool (75,000+ Signatures)</h3>
+              <p className="text-xs text-stone-400">Download the entire database including all unmasked phone numbers and NICs for official submission.</p>
+            </div>
+          </div>
+          <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono font-bold self-start sm:self-auto">
+            Secure Admin Only
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <a
+            href="/api/export-all?secret=sam_admin_2026&format=csv"
+            className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-stone-950 font-extrabold text-sm transition shadow-lg shadow-emerald-600/10 active:scale-95 text-center"
+          >
+            <FileText className="w-4 h-4" />
+            Download Complete CSV (Excel Compatible)
+          </a>
+          <a
+            href="/api/export-all?secret=sam_admin_2026&format=json"
+            target="_blank"
+            className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-stone-900 border border-stone-700 hover:bg-stone-800 text-stone-200 font-bold text-sm transition text-center"
+          >
+            <Terminal className="w-4 h-4" />
+            View Complete JSON Backup
+          </a>
+        </div>
+        <div className="mt-3 bg-stone-900/40 p-3 rounded-lg border border-stone-800/60 text-center">
+          <p className="text-[11px] text-stone-400">
+            ⚠️ <strong>Security Notice:</strong> These files contain unmasked, confidential raw signers data. Keep this page URL private and share only with authorized personnel.
+          </p>
+        </div>
+      </div>
 
       {/* Real-time Logs Console */}
       <div className="bg-stone-950 rounded-xl p-4 border border-stone-800">
