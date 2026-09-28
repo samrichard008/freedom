@@ -165,6 +165,7 @@ export async function getAllNewSignatures(): Promise<DBResponseSignature[]> {
         console.log('[PHP Bridge] Successfully fetched signatures from cPanel MySQL!');
         return data.signatures;
       }
+    }
   } catch (err) {
     // PHP bridge is optional; fallback to Bunny CDN silently
   }
