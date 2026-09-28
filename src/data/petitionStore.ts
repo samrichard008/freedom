@@ -158,8 +158,8 @@ export function saveStoredSignatures(signatures: Signature[]) {
 
 export function calculateStats(signatures: Signature[]): PetitionStats {
   const baseCount = signatures.length;
-  // Add the 42,000 offline physical petition count as requested by the user
-  const currentCount = baseCount + 42000;
+  // Add the 126,000 offline physical petition count as requested by the user to reach the 155k+ signatures target
+  const currentCount = baseCount + 126000;
   const percentage = currentCount === 0 ? 0 : Math.min(100, Number(((currentCount / PETITION_TARGET) * 100).toFixed(4)));
 
   const districtStats = calculateDistrictCounts(signatures);

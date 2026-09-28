@@ -65,6 +65,85 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 // Handle Signature Query / GET Request
 if ($method === 'GET') {
+    // 1. Check if we want to run the Bunny Storage Import Action
+    if (isset($_GET['action']) && $_GET['action'] === 'import_bunny') {
+        $bunny_url = 'https://sg.storage.bunnycdn.com/gnanasara-petition/signatures.json';
+        $access_key = 'e09085cd-4065-4aa7-a543641e2577-a063-4a05';
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $bunny_url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'AccessKey: ' . $access_key,
+            'Accept: application/json'
+        ]);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($httpCode !== 200 || !$response) {
+            echo json_encode(["success" => false, "error" => "Failed to fetch signatures from Bunny CDN. HTTP Status: " . $httpCode]);
+            exit;
+        }
+        
+        $signatures = json_decode($response, true);
+        if (!is_array($signatures)) {
+            echo json_encode(["success" => false, "error" => "Invalid JSON data from Bunny CDN."]);
+            exit;
+        }
+        
+        $imported = 0;
+        $skipped = 0;
+        
+        // Prepare INSERT query using ON DUPLICATE KEY UPDATE to avoid crashes/duplicates
+        $stmt = $pdo->prepare('INSERT INTO signatures (id, full_name, nic, phone, district, comment, signature_data_url, created_at, verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id=id');
+        
+        $pdo->beginTransaction();
+        try {
+            foreach ($signatures as $sig) {
+                $id = $sig['id'] ?? '';
+                $fullName = $sig['fullName'] ?? '';
+                $nic = strtoupper(trim($sig['nic'] ?? ''));
+                $phone = $sig['phone'] ?? '';
+                $district = $sig['district'] ?? '';
+                $comment = $sig['comment'] ?? '';
+                $signatureDataUrl = $sig['signatureDataUrl'] ?? null;
+                $createdAt = $sig['createdAt'] ?? date('c');
+                $verified = isset($sig['verified']) ? ($sig['verified'] ? 1 : 0) : 1;
+                
+                if (!$id || !$nic) {
+                    $skipped++;
+                    continue;
+                }
+                
+                $stmt->execute([$id, $fullName, $nic, $phone, $district, $comment, $signatureDataUrl, $createdAt, $verified]);
+                $imported++;
+            }
+            $pdo->commit();
+            echo json_encode(["success" => true, "message" => "Migration complete!", "imported" => $imported, "skipped" => $skipped]);
+            exit;
+        } catch (\Exception $e) {
+            $pdo->rollBack();
+            echo json_encode(["success" => false, "error" => "Database transaction failed: " . $e->getMessage()]);
+            exit;
+        }
+    }
+    
+    // 2. Check if we want to get database status count
+    if (isset($_GET['action']) && $_GET['action'] === 'count') {
+        try {
+            $stmt = $pdo->query('SELECT COUNT(*) as total FROM signatures');
+            $row = $stmt->fetch();
+            echo json_encode(["success" => true, "total_signatures" => intval($row['total'] ?? 0)]);
+            exit;
+        } catch (\PDOException $e) {
+            echo json_encode(["success" => false, "error" => $e->getMessage()]);
+            exit;
+        }
+    }
+
+    // Default GET: Fetch signatures
     try {
         $stmt = $pdo->query('SELECT id, full_name as fullName, nic, phone, district, comment, signature_data_url as signatureDataUrl, created_at as createdAt, verified FROM signatures ORDER BY created_at DESC');
         $rows = $stmt->fetchAll();
