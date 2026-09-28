@@ -19,7 +19,7 @@ const LOCAL_JSON_DB_PATH = path.join(process.cwd(), 'local_signatures_db.json');
 const BACKUP_JSON_PATH = path.join(process.cwd(), 'public', 'gnanasara_petition_backup.json');
 
 // cPanel PHP API Bridge configuration
-const PHP_BRIDGE_URL = 'https://oneplanet.lk/signatures-api.php';
+const PHP_BRIDGE_URL = 'https://oneplanet.lk/freedom/signatures-api.php';
 const API_KEY = '5m_sig_petition_key_2026';
 
 // Bunny Storage CDN configuration
@@ -165,9 +165,8 @@ export async function getAllNewSignatures(): Promise<DBResponseSignature[]> {
         console.log('[PHP Bridge] Successfully fetched signatures from cPanel MySQL!');
         return data.signatures;
       }
-    }
   } catch (err) {
-    console.log('[PHP Bridge] Fetch failed (PHP script not uploaded or offline). Trying Bunny Storage...');
+    // PHP bridge is optional; fallback to Bunny CDN silently
   }
 
   // 2. Try fetching from Bunny Storage CDN (Free, no quota, unlimited scale)
@@ -218,7 +217,7 @@ export async function addNewSignature(sig: DBResponseSignature): Promise<{ succe
       }
     }
   } catch (err) {
-    console.log('[PHP Bridge] Save failed (PHP script not uploaded). Saving to Bunny Storage CDN...');
+    // PHP bridge is optional; fallback to Bunny CDN silently
   }
 
   // 2. Try saving to Bunny Storage CDN (Free, unlimited scale)
@@ -290,7 +289,7 @@ export async function getSignatureByIdOrNic(queryVal: string): Promise<DBRespons
       }
     }
   } catch (err) {
-    console.log('[PHP Bridge] Fetch single failed. Querying Bunny Storage...');
+    // PHP bridge is optional; fallback silently
   }
 
   // 2. Query Bunny Storage
