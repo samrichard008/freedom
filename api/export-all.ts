@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import pg from 'pg';
 import { getAllNewSignatures } from '../api-lib/db.js';
 
 // Helper to escape CSV values correctly
@@ -39,10 +40,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const list = await getAllNewSignatures();
+    const mergedMap = new Map<string, any>();
+
+    // 1. Fetch from Neon PostgreSQL (Primary source for 72k+ signatures on Vercel)
+    const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL;
+    if (connectionString) {
+      console.log('[Export Postgres] PostgreSQL connection string found. Querying...');
+      const pool = new pg.Pool({
+        connectionString,
+        ssl: { rejectUnauthorized: false }
+      });
+      
+      try {
+        const resPg = await pool.query('SELECT * FROM signatures');
+        console.log(`[Export Postgres] Fetched ${resPg.rows.length} signatures from Neon Postgres.`);
+        
+        for (const row of resPg.rows) {
+          const key = (row.nic || '').trim().toUpperCase();
+          if (key) {
+            mergedMap.set(key, {
+              id: row.id,
+              fullName: row.full_name || row.fullName || '',
+              nic: row.nic || '',
+              phone: row.phone || '',
+              district: row.district || '',
+              comment: row.comment || '',
+              createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+              verified: row.verified !== false
+            });
+          }
+        }
+      } catch (pgErr: any) {
+        console.error('[Export Postgres] Failed to query PostgreSQL:', pgErr.message);
+      } finally {
+        await pool.end();
+      }
+    }
+
+    // 2. Fetch from cPanel PHP Bridge & Bunny CDN (Source for newer signatures)
+    try {
+      const fallbackList = await getAllNewSignatures();
+      console.log(`[Export Fallback] Fetched ${fallbackList.length} signatures from PHP Bridge / CDN.`);
+      
+      for (const sig of fallbackList) {
+        const key = (sig.nic || '').trim().toUpperCase();
+        if (key) {
+          // Add or overwrite with newer cPanel signature details if exists
+          mergedMap.set(key, {
+            id: sig.id,
+            fullName: sig.fullName || '',
+            nic: sig.nic || '',
+            phone: sig.phone || '',
+            district: sig.district || '',
+            comment: sig.comment || '',
+            createdAt: sig.createdAt || new Date().toISOString(),
+            verified: sig.verified !== false
+          });
+        }
+      }
+    } catch (fbErr: any) {
+      console.error('[Export Fallback] Failed to query fallback sources:', fbErr.message);
+    }
+
+    // 3. Convert Map to Array
+    const finalCombinedList = Array.from(mergedMap.values());
 
     // Sort by createdAt descending (newest first)
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    finalCombinedList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     if (format === 'csv') {
       // Return beautiful, Excel-compatible CSV file with UTF-8 BOM
@@ -53,7 +117,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const BOM = '\uFEFF';
       const csvHeaders = ['ID', 'Full Name', 'NIC', 'Phone Number', 'District', 'Date & Time', 'Verified', 'Comment'];
       
-      const csvRows = list.map(s => [
+      const csvRows = finalCombinedList.map(s => [
         escapeCsvValue(s.id),
         escapeCsvValue(s.fullName),
         escapeCsvValue(s.nic),
@@ -72,8 +136,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Default: Return complete raw JSON list
     res.status(200).json({ 
       success: true, 
-      count: list.length, 
-      signatures: list 
+      count: finalCombinedList.length, 
+      signatures: finalCombinedList 
     });
 
   } catch (err: any) {
