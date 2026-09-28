@@ -390,13 +390,8 @@ export default function App() {
   const [language, setLanguage] = useState<Language>('si');
   const [stats, setStats] = useState<PetitionStats>(() => getPetitionStats());
   const [signatures, setSignatures] = useState<Signature[]>(() => getStoredSignatures());
+  // Migration page disabled for security after successful migration
   const [isMigratePage, setIsMigratePage] = useState(false);
-
-  useEffect(() => {
-    if (window.location.search === '?migrate=true' || window.location.hash === '#migrate') {
-      setIsMigratePage(true);
-    }
-  }, []);
 
   const [activeCertSignature, setActiveCertSignature] = useState<Signature | null>(null);
   const [showVerifyModal, setShowVerifyModal] = useState(false);
@@ -445,13 +440,7 @@ export default function App() {
     }
   };
 
-  if (isMigratePage) {
-    return (
-      <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col font-sans selection:bg-amber-600 selection:text-white p-4">
-        <MigrationDashboard />
-      </div>
-    );
-  }
+  // Migration page rendering removed for maximum safety
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col font-sans selection:bg-amber-600 selection:text-white pb-16 md:pb-0">
